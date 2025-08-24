@@ -129,7 +129,6 @@ impl Bot {
 
     pub async fn load_position(conn: &mut redis::aio::MultiplexedConnection) -> Result<Position> {
         let opt: Option<String> = conn.get("trading_bot:position").await?;
-        info!("loaded position: {:?}", opt);
 
         Ok(match opt.as_deref() {
             Some("Flat") => Position::Flat,
