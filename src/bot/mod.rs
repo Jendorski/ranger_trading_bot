@@ -140,7 +140,6 @@ impl Bot {
     }
 
     async fn store_position(&mut self, pos: Position) -> Result<()> {
-        warn!("pos.as_str(): {:?}", pos.as_str());
         let _: () = self
             .redis_conn
             .set("trading_bot:position", pos.as_str())
