@@ -4,10 +4,13 @@ use std::{error::Error, time::Duration};
 use log::info;
 use tokio::time;
 
+use crate::bot::Bot;
+use crate::cache::RedisClient;
 use crate::config::Config;
 use crate::exchange::{Exchange, OrderSide};
 
 mod bot;
+mod cache;
 mod config;
 mod exchange;
 
@@ -68,6 +71,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let cfg = Config::from_env()?;
     info!("Loaded config: {:?}", cfg);
 
+    let mut binding = RedisClient::connect(&cfg.redis_url).await?;
+    let redis_conn = binding.get_conn();
+
     // 2️⃣ Create exchange instance (replace with real SDK in production)
     let exchange = Arc::new(HttpExchange {
         client: reqwest::Client::new(),
@@ -75,7 +81,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     });
 
     // 3️⃣ Bot state
-    let mut bot = bot::Bot::new();
+    let mut bot = bot::Bot::new(redis_conn.clone()).await?;
 
     // 4️⃣ Poll loop
     let mut interval = time::interval(Duration::from_secs(cfg.poll_interval_secs));

@@ -1,17 +1,11 @@
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use log::{info, warn};
+use serde::{Deserialize, Serialize};
 
 use crate::exchange::{Exchange, OrderSide};
-//use std::sync::Arc;
+use redis::AsyncCommands;
 
-/// Price band constants (in USD)
-// const BUY_ZONE_LOW: f64 = 115_200.0;
-// const BUY_ZONE_HIGH: f64 = 115_500.0;
-
-// const SELL_ZONE_LOW: f64 = 119_900.0;
-// const SELL_ZONE_HIGH: f64 = 120_008.0;
-
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Zone {
     pub low: f64,
     pub high: f64,
@@ -21,11 +15,11 @@ impl Zone {
     /// Returns true if price lies in the zone
     #[inline]
     pub fn contains(&self, price: f64) -> bool {
-        price <= self.low && price >= self.high
+        price >= self.low && price <= self.high
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Zones {
     pub long_zones: Vec<Zone>,
     pub short_zones: Vec<Zone>,
@@ -81,6 +75,25 @@ pub enum Position {
     Short,
 }
 
+impl Position {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Position::Flat => "Flat",
+            Position::Long => "Long",
+            Position::Short => "Short",
+        }
+    }
+
+    // fn from_str(s: &str) -> Option<Self> {
+    //     match s {
+    //         "Flat" => Some(Position::Flat),
+    //         "Long" => Some(Position::Long),
+    //         "Short" => Some(Position::Short),
+    //         _ => None,
+    //     }
+    // }
+}
+
 /// Trading state – we keep track of whether we have an open position
 #[derive(Debug)]
 pub struct Bot {
@@ -88,14 +101,51 @@ pub struct Bot {
     pub pos: Position, //Option<OrderSide>,
 
     pub zones: Zones,
+
+    // a *mutable* reference to the redis connection
+    redis_conn: redis::aio::MultiplexedConnection,
 }
 
 impl Bot {
-    pub fn new() -> Self {
-        Self {
-            pos: Position::Flat,
-            zones: Zones::default(),
-        }
+    pub async fn new(mut conn: redis::aio::MultiplexedConnection) -> Result<Self> {
+        let pos: Position = Self::load_position(&mut conn)
+            .await
+            .unwrap_or_else(|_| Position::Flat);
+        let zones: Zones = Self::load_zones(&mut conn)
+            .await
+            .unwrap_or_else(|_| Zones::default());
+
+        Ok(Self {
+            pos,
+            zones,
+            redis_conn: conn,
+        })
+    }
+
+    async fn load_zones(conn: &mut redis::aio::MultiplexedConnection) -> Result<Zones> {
+        let json: String = conn.get("trading_bot:zones").await?;
+        Ok(serde_json::from_str(&json)?)
+    }
+
+    pub async fn load_position(conn: &mut redis::aio::MultiplexedConnection) -> Result<Position> {
+        let opt: Option<String> = conn.get("trading_bot:position").await?;
+        info!("loaded position: {:?}", opt);
+
+        Ok(match opt.as_deref() {
+            Some("Flat") => Position::Flat,
+            Some("Long") => Position::Long,
+            Some("Short") => Position::Short,
+            _ => Position::Flat,
+        })
+    }
+
+    async fn store_position(&mut self, pos: Position) -> Result<()> {
+        warn!("pos.as_str(): {:?}", pos.as_str());
+        let _: () = self
+            .redis_conn
+            .set("trading_bot:position", pos.as_str())
+            .await?;
+        Ok(())
     }
 
     pub async fn run_cycle(
@@ -104,7 +154,8 @@ impl Bot {
         size: f64,
         exchange: &dyn Exchange,
     ) -> Result<()> {
-        warn!("What is the current position at?: {:#?}", self.pos);
+        info!("----Cycle start-----");
+        info!("Price = {:.2} | State = {:?}", price, self.pos);
 
         match self.pos {
             Position::Flat => {
@@ -143,80 +194,7 @@ impl Bot {
                 }
             }
         }
+        self.store_position(self.pos).await?;
         Ok(())
     }
 }
-
-// impl Bot {
-//     pub fn new() -> Self {
-//         Self {
-//             pos: Position::Flat,
-//             zones: Zones::default(),
-//         }
-//     }
-
-//     /// Main decision routine – called every poll cycle.
-//     ///
-//     /// * `price`   – current spot price
-//     /// * `order_size` – how many units to trade
-//     /// * `exchange`  – the exchange implementation
-//     pub async fn run_cycle(
-//         &mut self,
-//         price: f64,
-//         size: f64,
-//         exchange: Arc<dyn Exchange>,
-//     ) -> Result<()> {
-//         // 1️⃣ No open position → decide whether to enter a trade
-//         if self.pos.is_none() {
-//             if price >= BUY_ZONE_LOW && price <= BUY_ZONE_HIGH {
-//                 info!(
-//                     "Price {:.2} in BUY zone – opening LONG for {} BTC",
-//                     price, size
-//                 );
-//                 let exec_price = exchange.place_market_order(OrderSide::Buy, size).await?;
-//                 self.pos = Some(OrderSide::Buy);
-//                 info!("Executed at {:.2}", exec_price);
-//             } else if price >= SELL_ZONE_LOW && price <= SELL_ZONE_HIGH {
-//                 info!(
-//                     "Price {:.2} in SHORT zone – opening SHORT for {} BTC",
-//                     price, size
-//                 );
-//                 let exec_price = exchange.place_market_order(OrderSide::Sell, size).await?;
-//                 self.pos = Some(OrderSide::Sell);
-//                 info!("Executed at {:.2}", exec_price);
-//             } else {
-//                 // no action
-//                 warn!("Price {:.2} out of any zone – staying flat", price);
-//             }
-//         }
-
-//         // 2️⃣ Position open → check for take‑profit
-//         if let Some(side) = self.pos.clone() {
-//             match side {
-//                 OrderSide::Buy => {
-//                     // Long: close when price enters SELL zone
-//                     if price >= SELL_ZONE_LOW && price <= SELL_ZONE_HIGH {
-//                         info!("Price {:.2} in TAKE‑PROFIT zone for LONG – closing", price);
-//                         let exec_price = exchange.place_market_order(OrderSide::Sell, size).await?;
-//                         self.pos = None;
-//                         info!("Closed at {:.2}", exec_price);
-//                     }
-//                 }
-//                 OrderSide::Sell => {
-//                     // Short: close when price enters BUY zone
-//                     if price >= BUY_ZONE_LOW && price <= BUY_ZONE_HIGH {
-//                         info!(
-//                             "Price {:.2} in TAKE‑PROFIT zone for SHORT – covering",
-//                             price
-//                         );
-//                         let exec_price = exchange.place_market_order(OrderSide::Buy, size).await?;
-//                         self.pos = None;
-//                         info!("Covered at {:.2}", exec_price);
-//                     }
-//                 }
-//             }
-//         }
-
-//         Ok(())
-//     }
-// }

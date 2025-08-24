@@ -20,6 +20,8 @@ pub struct Config {
     /// Polling interval in seconds
     #[serde(default = "default_interval")]
     pub poll_interval_secs: u64,
+
+    pub redis_url: String,
 }
 
 fn default_interval() -> u64 {
@@ -47,26 +49,15 @@ impl Config {
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(15);
 
+        let redis_url = env::var("REDIS_URL").map_err(|_| anyhow!("Missing REDIS_URL"))?;
+
         Ok(Config {
             api_key,
             api_secret,
             symbol,
             order_size,
             poll_interval_secs,
+            redis_url,
         })
-
-        // Ok(serde_json::from_value(serde_json::json!({
-        //     "api_key": std::env::var("API_KEY")?,
-        //     "api_secret": std::env::var("API_SECRET")?,
-        //     "symbol": std::env::var("SYMBOL").unwrap_or_else(|_| "BTCUSDT".into()),
-        //     "order_size": std::env::var("ORDER_SIZE")
-        //         .ok()
-        //         .and_then(|v| v.parse::<f64>().ok())
-        //         .unwrap_or(0.001), // default 0.001 BTC
-        //     "poll_interval_secs": std::env::var("POLL_INTERVAL_SECS")
-        //         .ok()
-        //         .and_then(|v| v.parse::<u64>().ok())
-        //         .unwrap_or(5),
-        // })))
     }
 }

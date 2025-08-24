@@ -14,5 +14,6 @@ log            = "0.4"
 simple_logger  = "1.13"
 async-trait = "0.1.89"
 anyhow = "1.0"
+redis          = { version = "0.25", features = ["tokio-comp"] }
 
 # Optional: you can replace `reqwest` with the official exchange SDK if it exists.
