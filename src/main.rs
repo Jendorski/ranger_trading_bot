@@ -31,6 +31,8 @@ struct HttpExchange {
 impl Exchange for HttpExchange {
     async fn get_current_price(&self) -> Result<f64, anyhow::Error> {
         // Example: Binance spot ticker
+
+        //Bitget Futures Price API: https://api.bitget.com/api/v2/mix/market/symbol-price?productType=usdt-futures&symbol=BTCUSDT
         let resp = self
             .client
             .get(format!(

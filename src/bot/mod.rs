@@ -38,6 +38,10 @@ impl Default for Zones {
                     high: 105_000.8,
                 },
                 Zone {
+                    low: 111_005.0,
+                    high: 111_108.6,
+                },
+                Zone {
                     low: 111_715.9,
                     high: 112_064.8,
                 },
@@ -59,10 +63,10 @@ impl Default for Zones {
                     low: 117_814.0,
                     high: 118_008.3,
                 },
-                Zone {
-                    low: 116_885.0,
-                    high: 117_427.0,
-                },
+                // Zone {
+                //     low: 116_885.0,
+                //     high: 117_427.0,
+                // },
                 Zone {
                     low: 115_385.0,
                     high: 115_505.2,
@@ -74,10 +78,6 @@ impl Default for Zones {
                 Zone {
                     low: 112_990.0,
                     high: 113_100.0,
-                },
-                Zone {
-                    low: 111_005.0,
-                    high: 111_108.6,
                 },
             ],
         }
@@ -113,6 +113,11 @@ impl Position {
 /// Trading state – we keep track of whether we have an open position
 #[derive(Debug)]
 pub struct Bot {
+    pub entry_pos: f64,
+
+    // pub tp: f64,
+
+    // pub sl: f64,
     /// None if no position; Some(OrderSide::Buy) means long, Sell → short
     pub pos: Position, //Option<OrderSide>,
 
@@ -131,11 +136,21 @@ impl Bot {
             .await
             .unwrap_or_else(|_| Zones::default());
 
+        let entry_pos: f64 = Self::load_entry_pos(&mut conn)
+            .await
+            .unwrap_or_else(|_| 0.00);
+
         Ok(Self {
             pos,
             zones,
             redis_conn: conn,
+            entry_pos,
         })
+    }
+
+    async fn load_entry_pos(conn: &mut redis::aio::MultiplexedConnection) -> Result<f64> {
+        let json: String = conn.get("trading_bot:entry_position").await?;
+        Ok(serde_json::from_str(&json)?)
     }
 
     async fn load_zones(conn: &mut redis::aio::MultiplexedConnection) -> Result<Zones> {
