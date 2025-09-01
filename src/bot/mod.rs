@@ -34,8 +34,12 @@ impl Default for Zones {
                     high: 100_000.0,
                 },
                 Zone {
-                    low: 104_900.9,
-                    high: 105_000.8,
+                    low: 105_169.9,
+                    high: 106_097.8,
+                },
+                Zone {
+                    low: 107_169.9,
+                    high: 108_608.8,
                 },
                 Zone {
                     low: 111_005.0,
@@ -79,6 +83,14 @@ impl Default for Zones {
                     low: 112_990.0,
                     high: 113_100.0,
                 },
+                Zone {
+                    low: 108_608.0,
+                    high: 108_900.0,
+                },
+                Zone {
+                    low: 109_108.0,
+                    high: 109_486.0,
+                },
             ],
         }
     }
@@ -113,7 +125,7 @@ impl Position {
 /// Trading state – we keep track of whether we have an open position
 #[derive(Debug)]
 pub struct Bot {
-    pub entry_pos: f64,
+    //pub entry_pos: f64,
 
     // pub tp: f64,
 
@@ -136,22 +148,22 @@ impl Bot {
             .await
             .unwrap_or_else(|_| Zones::default());
 
-        let entry_pos: f64 = Self::load_entry_pos(&mut conn)
-            .await
-            .unwrap_or_else(|_| 0.00);
+        // let entry_pos: f64 = Self::load_entry_pos(&mut conn)
+        //     .await
+        //     .unwrap_or_else(|_| 0.00);
 
         Ok(Self {
             pos,
             zones,
             redis_conn: conn,
-            entry_pos,
+            //entry_pos,
         })
     }
 
-    async fn load_entry_pos(conn: &mut redis::aio::MultiplexedConnection) -> Result<f64> {
-        let json: String = conn.get("trading_bot:entry_position").await?;
-        Ok(serde_json::from_str(&json)?)
-    }
+    // async fn load_entry_pos(conn: &mut redis::aio::MultiplexedConnection) -> Result<f64> {
+    //     let json: String = conn.get("trading_bot:entry_position").await?;
+    //     Ok(serde_json::from_str(&json)?)
+    // }
 
     async fn load_zones(conn: &mut redis::aio::MultiplexedConnection) -> Result<Zones> {
         let json: String = conn.get("trading_bot:zones").await?;
