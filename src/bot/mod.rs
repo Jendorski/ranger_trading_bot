@@ -65,8 +65,12 @@ impl Default for Zones {
                     low: 118_899.0,
                     high: 119_002.7,
                 },
+                // Zone {
+                //     low: 117_814.0,
+                //     high: 118_008.3,
+                // },
                 Zone {
-                    low: 117_814.0,
+                    low: 117_500.0,
                     high: 118_008.3,
                 },
                 Zone {
@@ -121,7 +125,7 @@ impl Position {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ClosedPosition {
     pub id: uuid::Uuid,
-    pub side: Position,
+    pub position: Position,
     pub entry_price: f64,
     #[serde(with = "chrono::serde::ts_milliseconds")]
     pub entry_time: DateTime<Utc>,
@@ -306,7 +310,8 @@ impl Bot {
                         entry_price: price,
                         position_size: size,
                         entry_time: Utc::now(),
-                    }
+                    };
+                    self.current_pos_id = self.open_pos.id
                 } else if self.zones.short_zones.iter().any(|z| z.contains(price)) {
                     info!("Entering SHORT at {:.2}", price);
                     let exec_price = exchange.place_market_order(OrderSide::Sell, size).await?;
@@ -337,7 +342,7 @@ impl Bot {
                         entry_price: self.open_pos.entry_price,
                         exit_price: price,
                         exit_time: Utc::now(),
-                        side: Position::Long,
+                        position: Position::Long,
                         entry_time: self.open_pos.entry_time,
                         pnl: Bot::compute_pnl(&self.open_pos, price),
                     };
@@ -357,7 +362,7 @@ impl Bot {
                         entry_price: self.open_pos.entry_price,
                         exit_price: price,
                         exit_time: Utc::now(),
-                        side: Position::Short,
+                        position: Position::Short,
                         entry_time: self.open_pos.entry_time,
                         pnl: Bot::compute_pnl(&self.open_pos, price),
                     };
