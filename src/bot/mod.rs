@@ -75,11 +75,19 @@ impl Default for Zones {
                     low: 124_600.0,
                     high: 124_650.0,
                 },
+                Zone {
+                    low: 124_199.0,
+                    high: 125_220.0,
+                },
             ],
             short_zones: vec![
                 Zone {
                     low: 125_797.0,
                     high: 125_897.0,
+                },
+                Zone {
+                    low: 125_097.0,
+                    high: 125_197.0,
                 },
                 Zone {
                     low: 124_500.0,
