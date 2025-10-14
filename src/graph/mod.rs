@@ -168,7 +168,7 @@ impl Graph {
         let key = "closed_positions";
         // `LRANGE 0 -1` returns the whole list (newest → oldest)
         let raw_jsons: Vec<String> = conn.lrange(key, 0, -1).await?;
-        info!("raws: {:.?}", raw_jsons);
+        // info!("raws: {:.?}", raw_jsons);
 
         // Deserialize each JSON string into a struct
         raw_jsons
@@ -216,6 +216,7 @@ impl Graph {
         mut conn: redis::aio::MultiplexedConnection,
     ) -> anyhow::Result<()> {
         let positions = Self::load_all_closed_positions(&mut conn).await?;
+        info!("raws: {:.?}", positions);
 
         // ------------------------------------------------------------------
         // 1. Average % PnL per week

@@ -170,6 +170,7 @@ impl Position {
 pub struct ClosedPosition {
     pub id: uuid::Uuid,
     pub position: Position,
+    pub side: Option<Position>,
     pub entry_price: f64,
     #[serde(with = "chrono::serde::ts_milliseconds")]
     pub entry_time: DateTime<Utc>,
@@ -387,6 +388,7 @@ impl Bot {
                         exit_price: price,
                         exit_time: Utc::now(),
                         position: Position::Long,
+                        side: None,
                         entry_time: self.open_pos.entry_time,
                         pnl: Bot::compute_pnl(&self.open_pos, price),
                     };
@@ -407,6 +409,7 @@ impl Bot {
                         exit_price: price,
                         exit_time: Utc::now(),
                         position: Position::Short,
+                        side: None,
                         entry_time: self.open_pos.entry_time,
                         pnl: Bot::compute_pnl(&self.open_pos, price),
                     };
