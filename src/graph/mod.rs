@@ -2,6 +2,7 @@ use anyhow::Result;
 use anyhow::anyhow;
 use chrono::{Datelike, Local, Timelike};
 use log::info;
+use log::warn;
 use redis::{AsyncCommands, aio::MultiplexedConnection};
 use serde_json;
 use std::collections::BTreeMap;
@@ -187,9 +188,14 @@ impl Graph {
             let iso = pos.exit_time.iso_week(); // ISO‑8601 week (Mon–Sun)
             let key = (iso.year(), iso.week());
 
-            map.entry(key)
-                .or_default()
-                .push(Self::pnl_percent(pos.entry_price, pos.exit_price));
+            warn!("entry price: {:.2}", pos.entry_price);
+            warn!("exit price: {:.2}", pos.exit_price);
+
+            if pos.entry_price != 0.0 && pos.exit_price != 0.0 {
+                map.entry(key)
+                    .or_default()
+                    .push(Self::pnl_percent(pos.entry_price, pos.exit_price));
+            }
         }
         map
     }
@@ -199,9 +205,12 @@ impl Graph {
         let mut map: HashMap<(i32, u32), Vec<f64>> = HashMap::new();
         for pos in positions {
             let key = (pos.exit_time.year(), pos.exit_time.month());
-            map.entry(key)
-                .or_default()
-                .push(Self::pnl_percent(pos.entry_price, pos.exit_price));
+
+            if pos.entry_price != 0.00 && pos.exit_price != 0.00 {
+                map.entry(key)
+                    .or_default()
+                    .push(Self::pnl_percent(pos.entry_price, pos.exit_price));
+            }
         }
         map
     }
@@ -216,7 +225,6 @@ impl Graph {
         mut conn: redis::aio::MultiplexedConnection,
     ) -> anyhow::Result<()> {
         let positions = Self::load_all_closed_positions(&mut conn).await?;
-        info!("raws: {:.?}", positions);
 
         // ------------------------------------------------------------------
         // 1. Average % PnL per week
