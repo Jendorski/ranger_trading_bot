@@ -237,15 +237,6 @@ impl Graph {
             diff = pos.entry_price - pos.exit_price
         }
 
-        // warn!(
-        //     "position: {:?}, diff: {:5}, qty: {:3}",
-        //     pos.position,
-        //     diff,
-        // );
-
-        // (exit – entry) × quantity × multiplier
-        //direction * (pos.exit_price - pos.entry_price) * qty.unwrap_or(0.029) * leverage
-
         diff * qty.unwrap_or(0.029)
     }
 
@@ -287,7 +278,7 @@ impl Graph {
         for pos in &positions {
             let (pnl, roi) = Self::pnl_and_roi(pos, multiplier, leverage);
             println!(
-                "{:36} {:<36} {:<6} {:>10.2} {:>10.2} {:>12.2} {:>12.5}%",
+                "{:36} {:<36} {:<6} {:>10.2} {:>10.2} {:>12.2} {:>12.5} %",
                 pos.exit_time.format("%Y-%m-%d][%H:%M:%S"),
                 pos.id,
                 format!("{:?}", pos.position),
