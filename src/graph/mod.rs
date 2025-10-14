@@ -222,6 +222,11 @@ impl Graph {
             return 0.00;
         }
 
+        let mut qty = pos.quantity;
+        if qty == 0.00 {
+            qty = 0.029;
+        }
+
         let direction = match pos.position {
             Some(bot::Position::Long) => 1.0,
             Some(bot::Position::Short) => -1.0,
@@ -230,7 +235,7 @@ impl Graph {
         };
 
         // (exit – entry) × quantity × multiplier
-        direction * (pos.exit_price - pos.entry_price) * pos.quantity * multiplier
+        direction * (pos.exit_price - pos.entry_price) * qty * multiplier
     }
 
     /// Margin that was required to open this position.
