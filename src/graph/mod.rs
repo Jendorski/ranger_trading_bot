@@ -237,7 +237,12 @@ impl Graph {
             diff = pos.entry_price - pos.exit_price
         }
 
-        warn!("position: {:?}, diff: {:5}", pos.position, diff);
+        warn!(
+            "position: {:?}, diff: {:5}, qty: {:3}",
+            pos.position,
+            diff,
+            qty.unwrap_or(0.029)
+        );
 
         // (exit – entry) × quantity × multiplier
         //direction * (pos.exit_price - pos.entry_price) * qty.unwrap_or(0.029) * leverage
