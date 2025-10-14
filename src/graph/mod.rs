@@ -1,7 +1,6 @@
 use anyhow::Result;
 use anyhow::anyhow;
 use chrono::{Datelike, Local, Timelike};
-use log::info;
 use log::warn;
 use redis::{AsyncCommands, aio::MultiplexedConnection};
 use serde_json;
@@ -316,6 +315,7 @@ impl Graph {
         mut conn: redis::aio::MultiplexedConnection,
     ) -> anyhow::Result<()> {
         let positions = Self::load_all_closed_positions(&mut conn).await?;
+        warn!("positions: {:?}", positions);
 
         // ------------------------------------------------------------------
         // 1. Average % PnL per week
