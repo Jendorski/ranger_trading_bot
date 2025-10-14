@@ -227,13 +227,6 @@ impl Graph {
             qty = Some(0.029);
         }
 
-        // let direction = match pos.position {
-        //     Some(bot::Position::Long) => 1.0,
-        //     Some(bot::Position::Short) => -1.0,
-        //     Some(bot::Position::Flat) => 0.0,
-        //     None => 0.0,
-        // };
-
         let mut diff = 0.00;
 
         if pos.position == Some(bot::Position::Long) {
@@ -243,6 +236,8 @@ impl Graph {
         if pos.position == Some(bot::Position::Short) {
             diff = pos.entry_price - pos.exit_price
         }
+
+        warn!("position: {:?}, diff: {:5}", pos.position, diff);
 
         // (exit – entry) × quantity × multiplier
         //direction * (pos.exit_price - pos.entry_price) * qty.unwrap_or(0.029) * leverage
@@ -263,7 +258,7 @@ impl Graph {
     fn pnl_and_roi(pos: &bot::ClosedPosition, multiplier: f64, leverage: f64) -> (f64, f64) {
         let pnl = Self::calculate_futures_pnl(pos, multiplier);
         let margin = Self::margin_used(pos, leverage);
-        let roi = pnl / margin; // fraction – multiply by 100 for percent
+        let roi = (pnl / margin) * 100.0; // fraction – multiply by 100 for percent
         (pnl, roi)
     }
 
@@ -275,24 +270,24 @@ impl Graph {
         let leverage = 35.0; // 35× for both long & short
         let multiplier = 0.029; // 1 BTC per contract (adjust if you use a different size)
 
-        println!(
-            "{:<36} {:<6} {:>10} {:>10} {:>12} {:>12}",
-            "ID", "Side", "Entry", "Exit", "PnL ($)", "ROI (%)"
-        );
+        // println!(
+        //     "{:<36} {:<6} {:>10} {:>10} {:>12} {:>12}",
+        //     "ID", "Side", "Entry", "Exit", "PnL ($)", "ROI (%)"
+        // );
         let mut total_pnl: f64 = 0.0;
         let mut total_margin: f64 = 0.0;
 
         for pos in &positions {
             let (pnl, roi) = Self::pnl_and_roi(pos, multiplier, leverage);
-            println!(
-                "{:<36} {:<6} {:>10.2} {:>10.2} {:>12.2} {:>12.2}",
-                pos.id,
-                format!("{:?}", pos.position),
-                pos.entry_price,
-                pos.exit_price,
-                pnl,
-                roi
-            );
+            // println!(
+            //     "{:<36} {:<6} {:>10.2} {:>10.2} {:>12.2} {:>12.5}",
+            //     pos.id,
+            //     format!("{:?}", pos.position),
+            //     pos.entry_price,
+            //     pos.exit_price,
+            //     pnl,
+            //     roi
+            // );
 
             total_pnl += pnl;
             total_margin += Self::margin_used(pos, leverage);
