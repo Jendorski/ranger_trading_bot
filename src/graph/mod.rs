@@ -223,8 +223,8 @@ impl Graph {
         }
 
         let mut qty = pos.quantity;
-        if qty == 0.00 {
-            qty = 0.029;
+        if qty == Some(0.00) {
+            qty = Some(0.029);
         }
 
         let direction = match pos.position {
@@ -235,16 +235,16 @@ impl Graph {
         };
 
         // (exit – entry) × quantity × multiplier
-        direction * (pos.exit_price - pos.entry_price) * qty * multiplier
+        direction * (pos.exit_price - pos.entry_price) * qty.unwrap_or_default() * multiplier
     }
 
     /// Margin that was required to open this position.
     fn margin_used(pos: &bot::ClosedPosition, leverage: f64) -> f64 {
         let mut qty = pos.quantity;
-        if qty == 0.00 {
-            qty = 0.029;
+        if qty == Some(0.00) {
+            qty = Some(0.029);
         }
-        pos.entry_price * qty / leverage
+        pos.entry_price * qty.unwrap_or_default() / leverage
     }
 
     /// PnL and ROI relative to the margin you actually put up.

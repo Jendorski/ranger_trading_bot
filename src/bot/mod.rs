@@ -178,7 +178,7 @@ pub struct ClosedPosition {
     #[serde(with = "chrono::serde::ts_milliseconds")]
     pub exit_time: DateTime<Utc>,
     pub pnl: f64,
-    pub quantity: f64,
+    pub quantity: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -392,7 +392,7 @@ impl Bot {
                         side: None,
                         entry_time: self.open_pos.entry_time,
                         pnl: Bot::compute_pnl(&self.open_pos, price),
-                        quantity: 0.029,
+                        quantity: Some(0.029),
                     };
                     let _ = Bot::store_closed_position(&mut self.redis_conn, &closed_pos).await;
                 }
@@ -414,7 +414,7 @@ impl Bot {
                         side: None,
                         entry_time: self.open_pos.entry_time,
                         pnl: Bot::compute_pnl(&self.open_pos, price),
-                        quantity: 0.029,
+                        quantity: Some(0.029),
                     };
                     let _ = Bot::store_closed_position(&mut self.redis_conn, &closed_pos).await;
                 }
