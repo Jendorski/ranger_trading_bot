@@ -287,7 +287,7 @@ impl Graph {
         for pos in &positions {
             let (pnl, roi) = Self::pnl_and_roi(pos, multiplier, leverage);
             println!(
-                "{:74} {:<36} {:<6} {:>10.2} {:>10.2} {:>12.2} {:>12.5}",
+                "{:36} {:<36} {:<6} {:>10.2} {:>10.2} {:>12.2} {:>12.5}",
                 pos.exit_time.format("%Y-%m-%d][%H:%M:%S"),
                 pos.id,
                 format!("{:?}", pos.position),
