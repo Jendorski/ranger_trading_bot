@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::{error::Error, time::Duration};
 
-use log::info;
+use log::{info, warn};
 use tokio::time;
 
 use crate::cache::RedisClient;
@@ -88,11 +88,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // 4️⃣ Poll loop
     let mut interval = time::interval(Duration::from_secs(cfg.poll_interval_secs));
-    // if Graph::is_midnight() {
-    //     warn!("It's midnight now!");
-    //     Graph::prepare_in_logs(redis_conn.clone()).await?;
-    // }
-    Graph::prepare_cumulative_weekly_monthly(redis_conn.clone()).await?;
+    if Graph::is_midnight() {
+        warn!("It's midnight now!");
+        Graph::prepare_cumulative_weekly_monthly(redis_conn.clone()).await?;
+    }
 
     loop {
         interval.tick().await;

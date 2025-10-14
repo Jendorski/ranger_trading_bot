@@ -315,7 +315,6 @@ impl Graph {
         mut conn: redis::aio::MultiplexedConnection,
     ) -> anyhow::Result<()> {
         let positions = Self::load_all_closed_positions(&mut conn).await?;
-        warn!("positions: {:?}", positions);
 
         // ------------------------------------------------------------------
         // 1. Average % PnL per week

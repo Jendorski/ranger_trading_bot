@@ -217,7 +217,7 @@ impl OpenPosition {
         conn: &mut redis::aio::MultiplexedConnection,
         id: Uuid,
     ) -> Result<OpenPosition> {
-        let key = format!("trading::{}", id);
+        let key = format!("trading::active",);
 
         let open_pos: String = conn.get(key).await?;
 
@@ -228,7 +228,7 @@ impl OpenPosition {
         mut conn: redis::aio::MultiplexedConnection,
         open_pos: OpenPosition,
     ) -> Result<()> {
-        let key = format!("trading::{}", open_pos.id);
+        let key = format!("trading::active");
 
         let _: () = conn.set(key, open_pos.as_str()).await?;
 
