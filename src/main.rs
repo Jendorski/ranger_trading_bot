@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::{error::Error, time::Duration};
 
-use log::{info, warn};
+use log::info;
 use tokio::time;
 
 use crate::cache::RedisClient;

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use anyhow::anyhow;
 use chrono::{Datelike, Local, Timelike};
+use log::info;
 use redis::{AsyncCommands, aio::MultiplexedConnection};
 use serde_json;
 use std::collections::BTreeMap;
@@ -167,6 +168,7 @@ impl Graph {
         let key = "closed_positions";
         // `LRANGE 0 -1` returns the whole list (newest → oldest)
         let raw_jsons: Vec<String> = conn.lrange(key, 0, -1).await?;
+        info!("raws: {:.?}", raw_jsons);
 
         // Deserialize each JSON string into a struct
         raw_jsons
