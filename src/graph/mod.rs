@@ -320,8 +320,13 @@ impl Graph {
         // ------------------------------------------------------------------
         // 1. Average % PnL per week
         // ------------------------------------------------------------------
-        println!("--- Avg PnL % per week ---");
-        for ((y, w), pct) in Self::avg_pnl_weekly(&positions) {
+        // println!("--- Avg PnL % per week ---");
+        // for ((y, w), pct) in Self::avg_pnl_weekly(&positions) {
+        //     println!("{:04}-W{:02}: {:.2} %", y, w, pct);
+        // }
+
+        println!("--- Cumulative ROI % per week ---");
+        for ((y, w), pct) in Self::cumulative_roi_weekly(&positions) {
             println!("{:04}-W{:02}: {:.2} %", y, w, pct);
         }
 
@@ -336,10 +341,10 @@ impl Graph {
         // ------------------------------------------------------------------
         // 3. Absolute ROI (realised capital) per week
         // ------------------------------------------------------------------
-        println!("\n--- Absolute‑capital ROI % per week ---");
-        for ((y, w), roi) in Self::roi_weekly_absolute(&positions) {
-            println!("{:04}-W{:02}: {:.2} %", y, w, roi * 100.0);
-        }
+        // println!("\n--- Absolute‑capital ROI % per week ---");
+        // for ((y, w), roi) in Self::roi_weekly_absolute(&positions) {
+        //     println!("{:04}-W{:02}: {:.2} %", y, w, roi * 100.0);
+        // }
 
         Ok(())
     }
