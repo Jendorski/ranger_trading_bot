@@ -235,7 +235,7 @@ impl Graph {
         };
 
         // (exit – entry) × quantity × multiplier
-        direction * (pos.exit_price - pos.entry_price) * qty.unwrap_or_default() * multiplier
+        direction * (pos.exit_price - pos.entry_price) * qty.unwrap_or(0.029) * multiplier
     }
 
     /// Margin that was required to open this position.
@@ -244,7 +244,7 @@ impl Graph {
         if qty == Some(0.00) {
             qty = Some(0.029);
         }
-        pos.entry_price * qty.unwrap_or_default() / leverage
+        pos.entry_price * qty.unwrap_or(0.029) / leverage
     }
 
     /// PnL and ROI relative to the margin you actually put up.
@@ -264,8 +264,8 @@ impl Graph {
         let multiplier = 0.029; // 1 BTC per contract (adjust if you use a different size)
 
         println!(
-            "{:<36} {:<6} {:>10} {:>10} {:>12}",
-            "ID", "Side", "Entry", "Exit", "PnL ($)"
+            "{:<36} {:<6} {:>10} {:>10} {:>12} {:>12}",
+            "ID", "Side", "Entry", "Exit", "PnL ($)", "ROI (%)"
         );
         let mut total_pnl: f64 = 0.0;
         let mut total_margin: f64 = 0.0;
