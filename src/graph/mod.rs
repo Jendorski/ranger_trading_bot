@@ -215,7 +215,7 @@ impl Graph {
         now.hour() == 0 && now.minute() == 0
     }
 
-    /// The “multiplier” is the contract size in base units.  
+    /// The leverage is the contract size in base units.  
     /// For BTC‑futures on most exchanges it’s `1.0` (i.e. one contract = 1 BTC).
     fn calculate_futures_pnl(pos: &bot::ClosedPosition, multiplier: f64) -> f64 {
         if pos.entry_price == 0.00 || pos.exit_price == 0.00 {
@@ -227,15 +227,27 @@ impl Graph {
             qty = Some(0.029);
         }
 
-        let direction = match pos.position {
-            Some(bot::Position::Long) => 1.0,
-            Some(bot::Position::Short) => -1.0,
-            Some(bot::Position::Flat) => 0.0,
-            None => 0.0,
-        };
+        // let direction = match pos.position {
+        //     Some(bot::Position::Long) => 1.0,
+        //     Some(bot::Position::Short) => -1.0,
+        //     Some(bot::Position::Flat) => 0.0,
+        //     None => 0.0,
+        // };
+
+        let mut diff = 0.00;
+
+        if pos.position == Some(bot::Position::Long) {
+            diff = pos.exit_price - pos.entry_price;
+        }
+
+        if pos.position == Some(bot::Position::Short) {
+            diff = pos.entry_price - pos.exit_price
+        }
 
         // (exit – entry) × quantity × multiplier
-        direction * (pos.exit_price - pos.entry_price) * qty.unwrap_or(0.029) * multiplier
+        //direction * (pos.exit_price - pos.entry_price) * qty.unwrap_or(0.029) * leverage
+
+        diff * qty.unwrap_or(0.029)
     }
 
     /// Margin that was required to open this position.
@@ -244,7 +256,7 @@ impl Graph {
         if qty == Some(0.00) {
             qty = Some(0.029);
         }
-        pos.entry_price * qty.unwrap_or(0.029) / leverage
+        (pos.entry_price * qty.unwrap_or(0.029)) / leverage
     }
 
     /// PnL and ROI relative to the margin you actually put up.
