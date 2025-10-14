@@ -15,16 +15,6 @@ pub struct Graph {
 }
 
 impl Graph {
-    //mut conn: redis::aio::MultiplexedConnection
-    // pub async fn new() -> Result<Self> {
-    //     let btc_traded: f64 = 0.029;
-
-    //     // Self::load_position(&mut conn)
-    //     //     .await
-    //     //     .unwrap_or_else(|_| Position::Flat);
-
-    //     //Ok(Self { btc_traded })
-    // }
     /// Percentage PnL of a single trade
     fn pnl_percent(entry: f64, exit: f64) -> f64 {
         if entry == 0.00 || exit == 0.00 {
@@ -195,9 +185,6 @@ impl Graph {
             let iso = pos.exit_time.iso_week(); // ISO‑8601 week (Mon–Sun)
             let key = (iso.year(), iso.week());
 
-            warn!("entry price: {:.2}", pos.entry_price);
-            warn!("exit price: {:.2}", pos.exit_price);
-
             if pos.entry_price != 0.0 && pos.exit_price != 0.0 {
                 map.entry(key)
                     .or_default()
@@ -228,7 +215,93 @@ impl Graph {
         now.hour() == 0 && now.minute() == 0
     }
 
-    pub async fn prepare_in_logs(
+    /// The “multiplier” is the contract size in base units.  
+    /// For BTC‑futures on most exchanges it’s `1.0` (i.e. one contract = 1 BTC).
+    fn calculate_futures_pnl(pos: &bot::ClosedPosition, multiplier: f64) -> f64 {
+        if pos.entry_price == 0.00 || pos.exit_price == 0.00 {
+            return 0.00;
+        }
+
+        let direction = match pos.position {
+            Some(bot::Position::Long) => 1.0,
+            Some(bot::Position::Short) => -1.0,
+            Some(bot::Position::Flat) => 0.0,
+            None => 0.0,
+        };
+
+        // (exit – entry) × quantity × multiplier
+        direction * (pos.exit_price - pos.entry_price) * pos.quantity * multiplier
+    }
+
+    /// Margin that was required to open this position.
+    fn margin_used(pos: &bot::ClosedPosition, leverage: f64) -> f64 {
+        let mut qty = pos.quantity;
+        if qty == 0.00 {
+            qty = 0.029;
+        }
+        pos.entry_price * qty / leverage
+    }
+
+    /// PnL and ROI relative to the margin you actually put up.
+    fn pnl_and_roi(pos: &bot::ClosedPosition, multiplier: f64, leverage: f64) -> (f64, f64) {
+        let pnl = Self::calculate_futures_pnl(pos, multiplier);
+        let margin = Self::margin_used(pos, leverage);
+        let roi = pnl / margin; // fraction – multiply by 100 for percent
+        (pnl, roi)
+    }
+
+    pub async fn all_trade_compute(
+        mut conn: redis::aio::MultiplexedConnection,
+    ) -> anyhow::Result<()> {
+        let positions = Self::load_all_closed_positions(&mut conn).await?;
+
+        let leverage = 35.0; // 35× for both long & short
+        let multiplier = 0.029; // 1 BTC per contract (adjust if you use a different size)
+
+        println!(
+            "{:<36} {:<6} {:>10} {:>10} {:>12}",
+            "ID", "Side", "Entry", "Exit", "PnL ($)"
+        );
+        let mut total_pnl: f64 = 0.0;
+        let mut total_margin: f64 = 0.0;
+
+        for pos in &positions {
+            let (pnl, roi) = Self::pnl_and_roi(pos, multiplier, leverage);
+            println!(
+                "{:<36} {:<6} {:>10.2} {:>10.2} {:>12.2} {:>12.2}",
+                pos.id,
+                format!("{:?}", pos.position),
+                pos.entry_price,
+                pos.exit_price,
+                pnl,
+                roi
+            );
+
+            total_pnl += pnl;
+            total_margin += Self::margin_used(pos, leverage);
+        }
+
+        // ----- Aggregated results --------------------------------------------
+        println!("\nTotal realised PnL: ${:.2}", total_pnl);
+        println!(
+            "Total margin used (across all trades): ${:.2}",
+            total_margin
+        );
+
+        let overall_roi = if total_margin != 0.0 {
+            total_pnl / total_margin
+        } else {
+            0.0
+        };
+        println!(
+            "Overall ROI on the capital you actually put in: {:.2}%",
+            overall_roi * 100.0
+        );
+
+        Ok(())
+    }
+
+    pub async fn prepare_cumulative_weekly_monthly(
         mut conn: redis::aio::MultiplexedConnection,
     ) -> anyhow::Result<()> {
         let positions = Self::load_all_closed_positions(&mut conn).await?;

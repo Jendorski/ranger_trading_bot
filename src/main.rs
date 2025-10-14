@@ -92,7 +92,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //     warn!("It's midnight now!");
     //     Graph::prepare_in_logs(redis_conn.clone()).await?;
     // }
-    Graph::prepare_in_logs(redis_conn.clone()).await?;
+    Graph::all_trade_compute(redis_conn.clone()).await?;
 
     loop {
         interval.tick().await;
