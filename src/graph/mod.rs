@@ -262,7 +262,10 @@ impl Graph {
     fn pnl_and_roi(pos: &bot::ClosedPosition, multiplier: f64, leverage: f64) -> (f64, f64) {
         let pnl = Self::calculate_futures_pnl(pos, multiplier);
         let margin = Self::margin_used(pos, leverage);
-        let roi = (pnl / margin) * 100.0; // fraction – multiply by 100 for percent
+        let mut roi: f64 = 0.00; // fraction – multiply by 100 for percent
+        if pnl != 0.00 && margin != 0.00 {
+            roi = (pnl / margin) * 100.0;
+        }
         (pnl, roi)
     }
 
@@ -284,9 +287,10 @@ impl Graph {
         for pos in &positions {
             let (pnl, roi) = Self::pnl_and_roi(pos, multiplier, leverage);
             println!(
-                "{:<36} {:<6} {:>10.2} {:>10.2} {:>12.2} {:>12.5}",
+                "{:74} {:<36} {:<6} {:>10.2} {:>10.2} {:>12.2} {:>12.5}",
+                pos.exit_time.format("%Y-%m-%d][%H:%M:%S"),
                 pos.id,
-                format!("{:?}", pos.position.unwrap()),
+                format!("{:?}", pos.position),
                 pos.entry_price,
                 pos.exit_price,
                 pnl,
