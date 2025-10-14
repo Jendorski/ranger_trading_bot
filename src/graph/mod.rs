@@ -27,7 +27,7 @@ impl Graph {
     // }
     /// Percentage PnL of a single trade
     fn pnl_percent(entry: f64, exit: f64) -> f64 {
-        if entry == 0.00 && exit == 0.00 {
+        if entry == 0.00 || exit == 0.00 {
             return 0.00;
         }
 
@@ -36,7 +36,7 @@ impl Graph {
 
     /// Absolute profit in USD assuming we always invest `notional` dollars at entry.
     fn pnl_absolute(entry: f64, exit: f64, notional: f64) -> f64 {
-        if entry == 0.00 && exit == 0.00 {
+        if entry == 0.00 || exit == 0.00 {
             return 0.00;
         }
         let qty = notional / entry; // BTC amount bought/sold
