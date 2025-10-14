@@ -1,6 +1,6 @@
 use anyhow::Result;
 use anyhow::anyhow;
-use chrono::{DateTime, Datelike, Local, Timelike, Utc};
+use chrono::{Datelike, Local, Timelike};
 use redis::{AsyncCommands, aio::MultiplexedConnection};
 use serde_json;
 use std::collections::BTreeMap;
@@ -9,20 +9,20 @@ use std::collections::HashMap;
 use crate::bot::{self};
 
 pub struct Graph {
-    pub btc_traded: f64,
+    //pub btc_traded: f64,
 }
 
 impl Graph {
     //mut conn: redis::aio::MultiplexedConnection
-    pub async fn new() -> Result<Self> {
-        let btc_traded: f64 = 0.029;
+    // pub async fn new() -> Result<Self> {
+    //     let btc_traded: f64 = 0.029;
 
-        // Self::load_position(&mut conn)
-        //     .await
-        //     .unwrap_or_else(|_| Position::Flat);
+    //     // Self::load_position(&mut conn)
+    //     //     .await
+    //     //     .unwrap_or_else(|_| Position::Flat);
 
-        Ok(Self { btc_traded })
-    }
+    //     //Ok(Self { btc_traded })
+    // }
     /// Percentage PnL of a single trade
     fn pnl_percent(entry: f64, exit: f64) -> f64 {
         (exit - entry) / entry * 100.0
