@@ -183,6 +183,7 @@ pub struct ClosedPosition {
     //pub tp: Option<f64>,
     pub sl: Option<f64>,
     pub roi: Option<f64>,
+    pub leverage: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -443,9 +444,10 @@ impl Bot {
             side: None,
             entry_time: self.open_pos.entry_time,
             pnl: Self::compute_pnl(&self.open_pos, price),
-            quantity: Some(0.029),
+            quantity: Some(self.open_pos.position_size),
             sl: self.open_pos.sl,
             roi: Some(Self::calc_roi(self, price)),
+            leverage: self.open_pos.leverage,
         };
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
     }
@@ -460,9 +462,10 @@ impl Bot {
             side: None,
             entry_time: self.open_pos.entry_time,
             pnl: Self::compute_pnl(&self.open_pos, price),
-            quantity: Some(0.029),
+            quantity: Some(self.open_pos.position_size),
             sl: self.open_pos.sl,
             roi: Some(Self::calc_roi(self, price)),
+            leverage: self.open_pos.leverage,
         };
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
     }
@@ -544,7 +547,6 @@ impl Bot {
                 );
                 let should_close =
                     Self::should_close(price, self.pos, self.open_pos.sl.unwrap_or(in_sl));
-                warn!("should_close -> {:?}, in_sl -> {:?}", should_close, in_sl);
 
                 if should_close {
                     Self::close_long_position(self, price).await;

@@ -222,10 +222,7 @@ impl Graph {
             return 0.00;
         }
 
-        let mut qty = pos.quantity;
-        if qty == Some(0.00) {
-            qty = Some(0.029);
-        }
+        let qty = pos.quantity;
 
         let mut diff = 0.00;
 
@@ -237,16 +234,13 @@ impl Graph {
             diff = pos.entry_price - pos.exit_price
         }
 
-        diff * qty.unwrap_or(0.029)
+        diff * qty.unwrap_or_default()
     }
 
     /// Margin that was required to open this position.
     pub fn margin_used(pos: &bot::ClosedPosition, leverage: f64) -> f64 {
-        let mut qty = pos.quantity;
-        if qty == Some(0.00) {
-            qty = Some(0.029);
-        }
-        (pos.entry_price * qty.unwrap_or(0.029)) / leverage
+        let qty = pos.quantity;
+        (pos.entry_price * qty.unwrap_or_default()) / leverage
     }
 
     /// PnL and ROI relative to the margin you actually put up.
@@ -265,9 +259,6 @@ impl Graph {
     ) -> anyhow::Result<()> {
         let positions = Self::load_all_closed_positions(&mut conn).await?;
 
-        let leverage = 35.0; // 35× for both long & short
-        //let multiplier = 0.029; // 1 BTC per contract (adjust if you use a different size)
-
         println!(
             "{:<36} {:<6} {:>10} {:>10} {:>12} {:>12}",
             "ID", "Side", "Entry", "Exit", "PnL ($)", "ROI (%)"
@@ -276,7 +267,7 @@ impl Graph {
         let mut total_margin: f64 = 0.0;
 
         for pos in &positions {
-            let (pnl, roi) = Self::pnl_and_roi(pos, leverage);
+            let (pnl, roi) = Self::pnl_and_roi(pos, pos.leverage.unwrap_or_default());
             println!(
                 "{:36} {:<36} {:<6} {:>10.2} {:>10.2} {:>12.2} {:>12.5} %",
                 pos.exit_time.format("%Y-%m-%d][%H:%M:%S"),
@@ -289,7 +280,7 @@ impl Graph {
             );
 
             total_pnl += pnl;
-            total_margin += Self::margin_used(pos, leverage);
+            total_margin += Self::margin_used(pos, pos.leverage.unwrap_or_default());
         }
 
         // ----- Aggregated results --------------------------------------------
