@@ -4,6 +4,7 @@ use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::config::Config;
 use crate::exchange::{Exchange, OrderSide};
 use redis::AsyncCommands;
 
@@ -340,11 +341,21 @@ impl Bot {
     /// Profit / loss for an open trade given the exit price.
     /// Positive → you made money, negative → you lost.
     pub fn compute_pnl(entry: &OpenPosition, exit_price: f64) -> f64 {
-        match entry.pos {
-            Position::Long => exit_price - entry.entry_price,
-            Position::Short => entry.entry_price - exit_price,
-            Position::Flat => 0.00,
+        let mut pnl = 0.00;
+
+        if entry.pos == Position::Long {
+            pnl = exit_price - entry.entry_price;
         }
+
+        if entry.pos == Position::Short {
+            pnl = entry.entry_price - exit_price;
+        }
+
+        let pos_size = entry.position_size;
+
+        info!("pnl * pos_size {:2} * {:2}", pnl, pos_size);
+
+        return pnl * pos_size;
     }
 
     pub fn position_size(margin: f64, leverage: f64) -> f64 {
@@ -373,6 +384,32 @@ impl Bot {
         0.00
     }
 
+    pub fn prepare_open_position(
+        &mut self,
+        pos: Position,
+        entry_price: f64,
+        position_size: f64,
+        margin: f64,
+        leverage: f64,
+        risk_pct: f64,
+    ) -> OpenPosition {
+        let sl = Self::stop_loss_price(entry_price, margin, leverage, risk_pct, pos);
+        let qty = Self::contract_amount(entry_price, margin, leverage);
+        OpenPosition {
+            id: Uuid::new_v4(),
+            pos: pos,
+            entry_price: entry_price,
+            position_size, //does the same thing as quantity :(
+            entry_time: Utc::now(),
+            sl: Some(sl),
+            margin: Some(margin),
+            quantity: Some(qty),
+            leverage: Some(leverage),
+            risk_pct: Some(risk_pct),
+        }
+    }
+
+    //Function to trigger Stop Loss
     pub fn should_close(current_price: f64, side: Position, sl: f64) -> bool {
         if side == Position::Long {
             return current_price <= sl;
@@ -387,13 +424,8 @@ impl Bot {
 
     pub fn calc_roi(&mut self, exit_price: f64) -> f64 {
         let pnl = Self::compute_pnl(&self.open_pos, exit_price);
-        let mut qty = self.open_pos.quantity;
-        if qty == Some(0.00) {
-            qty = Some(0.029);
-        }
 
-        let margin = (self.open_pos.entry_price * qty.unwrap_or(0.029))
-            / self.open_pos.leverage.unwrap_or(35.00);
+        let margin = self.open_pos.margin.unwrap_or_default();
         let mut roi: f64 = 0.00; // fraction – multiply by 100 for percent
         if pnl != 0.00 && margin != 0.00 {
             roi = (pnl / margin) * 100.0;
@@ -410,12 +442,12 @@ impl Bot {
             position: Some(Position::Long),
             side: None,
             entry_time: self.open_pos.entry_time,
-            pnl: Bot::compute_pnl(&self.open_pos, price),
+            pnl: Self::compute_pnl(&self.open_pos, price),
             quantity: Some(0.029),
             sl: self.open_pos.sl,
             roi: Some(Self::calc_roi(self, price)),
         };
-        let _ = Bot::store_closed_position(&mut self.redis_conn, &closed_pos).await;
+        let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
     }
 
     pub async fn close_short_position(&mut self, price: f64) {
@@ -427,62 +459,74 @@ impl Bot {
             position: Some(Position::Short),
             side: None,
             entry_time: self.open_pos.entry_time,
-            pnl: Bot::compute_pnl(&self.open_pos, price),
+            pnl: Self::compute_pnl(&self.open_pos, price),
             quantity: Some(0.029),
             sl: self.open_pos.sl,
             roi: Some(Self::calc_roi(self, price)),
         };
-        let _ = Bot::store_closed_position(&mut self.redis_conn, &closed_pos).await;
+        let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
+    }
+
+    //Function to calculate the amount of the crypto (BTC in this case) bought in the Futures.
+    //If your margin, for example is 50 USDT with a leverage of 20, total is 1000 USDT
+    //This function then calculates the amount of BTC bought with that 1000 USDT
+    pub fn contract_amount(entry_price: f64, margin: f64, leverage: f64) -> f64 {
+        let position_size = Self::position_size(margin, leverage);
+        let btc_amount = position_size / entry_price;
+
+        btc_amount
     }
 
     pub async fn run_cycle(
         &mut self,
         price: f64,
-        size: f64,
         exchange: &dyn Exchange,
+        config: &mut Config,
     ) -> Result<()> {
-        //info!("----Cycle start-----");
         info!("Price = {:.2} | State = {:?}", price, self.pos);
+
+        let size = Self::contract_amount(price, config.margin, config.leverage);
 
         match self.pos {
             Position::Flat => {
                 if self.zones.long_zones.iter().any(|z| z.contains(price)) {
                     info!("Entering LONG at {:.2}", price);
+
                     let exec_price = exchange.place_market_order(OrderSide::Buy, size).await?;
                     info!("Long executed at {:.2}", exec_price);
+
                     self.pos = Position::Long;
-                    let sl = Self::stop_loss_price(price, 50.00, 20.00, 0.05, self.pos);
-                    self.open_pos = OpenPosition {
-                        id: Uuid::new_v4(),
-                        pos: Position::Long,
-                        entry_price: price,
-                        position_size: size,
-                        entry_time: Utc::now(),
-                        sl: Some(sl),
-                        margin: Some(50.00),
-                        quantity: Some(0.015),
-                        risk_pct: Some(0.05), //5%,
-                        leverage: Some(35.00),
-                    };
+
+                    self.open_pos = Self::prepare_open_position(
+                        self,
+                        self.pos,
+                        price,
+                        size,
+                        config.margin,
+                        config.leverage,
+                        config.risk_pct,
+                    );
+
                     self.current_pos_id = self.open_pos.id
                 } else if self.zones.short_zones.iter().any(|z| z.contains(price)) {
                     info!("Entering SHORT at {:.2}", price);
+
                     let exec_price = exchange.place_market_order(OrderSide::Sell, size).await?;
+
                     info!("Short executed at {:.2}", exec_price);
+
                     self.pos = Position::Short;
-                    let sl = Self::stop_loss_price(price, 50.00, 20.00, 0.05, self.pos);
-                    self.open_pos = OpenPosition {
-                        id: Uuid::new_v4(),
-                        pos: Position::Short,
-                        entry_price: price,
-                        position_size: size,
-                        entry_time: Utc::now(),
-                        sl: Some(sl),
-                        margin: Some(50.00),
-                        quantity: Some(0.015),
-                        risk_pct: Some(0.05), //5%
-                        leverage: Some(35.00),
-                    };
+
+                    self.open_pos = Self::prepare_open_position(
+                        self,
+                        Position::Short,
+                        price,
+                        size,
+                        config.margin,
+                        config.leverage,
+                        config.risk_pct,
+                    );
+
                     self.current_pos_id = self.open_pos.id;
                 } else {
                     warn!("Price {:.2} out of any zone -- staying flat", price);
@@ -494,34 +538,27 @@ impl Bot {
                 let in_sl = Self::stop_loss_price(price, 50.00, 20.00, 0.05, Position::Long);
                 if Self::should_close(price, self.pos, self.open_pos.sl.unwrap_or(in_sl)) {
                     Self::close_long_position(self, price).await;
+
                     warn!(
                         "SL for Long Position entered at {:2}, with SL triggered at {:2}",
                         self.open_pos.entry_price,
                         self.open_pos.sl.unwrap()
                     );
+
                     self.pos = Position::Flat;
                 }
 
                 // 2️⃣ Take‑profit: exit long when we hit the short zone.
                 if self.zones.short_zones.iter().any(|z| z.contains(price)) {
                     info!("Taking profit on LONG at {:.2}", price);
+
                     let exec_price = exchange.place_market_order(OrderSide::Sell, size).await?;
+
                     info!("Closed LONG at {:.2}", exec_price);
+
+                    Self::close_long_position(self, price).await;
+
                     self.pos = Position::Flat;
-                    let closed_pos = ClosedPosition {
-                        id: self.open_pos.id,
-                        entry_price: self.open_pos.entry_price,
-                        exit_price: price,
-                        exit_time: Utc::now(),
-                        position: Some(Position::Long),
-                        side: None,
-                        entry_time: self.open_pos.entry_time,
-                        pnl: Bot::compute_pnl(&self.open_pos, price),
-                        quantity: Some(0.029),
-                        sl: self.open_pos.sl,
-                        roi: Some(Self::calc_roi(self, price)),
-                    };
-                    let _ = Bot::store_closed_position(&mut self.redis_conn, &closed_pos).await;
                 }
             }
 
@@ -530,34 +567,27 @@ impl Bot {
                 //Trigger SL if it's met
                 if Self::should_close(price, self.pos, self.open_pos.sl.unwrap_or(in_sl)) {
                     Self::close_short_position(self, price).await;
+
                     warn!(
                         "SL for Short Position entered at {:2}, with SL triggered at {:2}",
                         self.open_pos.entry_price,
                         self.open_pos.sl.unwrap_or(0.00)
                     );
+
                     self.pos = Position::Flat;
                 }
 
                 // 3️⃣ Cover: exit short when we hit the long zone.
                 if self.zones.long_zones.iter().any(|z| z.contains(price)) {
                     info!("Covering SHORT at {:.2}", price);
+
                     let exec_price = exchange.place_market_order(OrderSide::Buy, size).await?;
+
                     info!("Covered SHORT at {:.2}", exec_price);
+
+                    Self::close_short_position(self, price).await;
+
                     self.pos = Position::Flat;
-                    let closed_pos = ClosedPosition {
-                        id: self.open_pos.id,
-                        entry_price: self.open_pos.entry_price,
-                        exit_price: price,
-                        exit_time: Utc::now(),
-                        position: Some(Position::Short),
-                        side: None,
-                        entry_time: self.open_pos.entry_time,
-                        pnl: Bot::compute_pnl(&self.open_pos, price),
-                        quantity: Some(0.029),
-                        sl: self.open_pos.sl,
-                        roi: Some(Self::calc_roi(self, price)),
-                    };
-                    let _ = Bot::store_closed_position(&mut self.redis_conn, &closed_pos).await;
                 }
             }
         }

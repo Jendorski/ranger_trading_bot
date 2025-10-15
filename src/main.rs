@@ -4,7 +4,6 @@ use std::{error::Error, time::Duration};
 use log::{info, warn};
 use tokio::time;
 
-use crate::bot::Bot;
 use crate::cache::RedisClient;
 use crate::config::Config;
 use crate::exchange::{Exchange, OrderSide};
@@ -72,7 +71,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .unwrap();
 
     // 1️⃣ Load config
-    let cfg = Config::from_env()?;
+    let mut cfg = Config::from_env()?;
     info!("Loaded config: {:?}", cfg);
 
     let mut binding = RedisClient::connect(&cfg.redis_url).await?;
@@ -95,10 +94,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         match exchange.get_current_price().await {
             Ok(price) => {
-                if let Err(e) = bot
-                    .run_cycle(price, cfg.order_size, exchange.as_ref())
-                    .await
-                {
+                if let Err(e) = bot.run_cycle(price, exchange.as_ref(), &mut cfg).await {
                     eprintln!("Error during cycle: {e}");
                 }
             }
