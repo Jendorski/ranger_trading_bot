@@ -347,16 +347,20 @@ impl Bot {
         }
     }
 
+    pub fn position_size(margin: f64, leverage: f64) -> f64 {
+        margin * leverage
+    }
+
     pub fn stop_loss_price(
         entry_price: f64,
         margin: f64,
-        //leverage: f64, // not used in the formula – kept for symmetry
-        quantity: f64,
+        leverage: f64,
         risk_pct: f64,
         pos: Position,
     ) -> f64 {
         let desired_loss = margin * risk_pct; // $4.65
-        let delta_price = desired_loss / quantity; // how many dollars of price change
+        let position_size = Self::position_size(margin, leverage);
+        let delta_price = (desired_loss / position_size) * entry_price; //desired_loss / quantity; // how many dollars of price change
 
         if pos == Position::Long {
             return entry_price - delta_price;
@@ -447,7 +451,7 @@ impl Bot {
                     let exec_price = exchange.place_market_order(OrderSide::Buy, size).await?;
                     info!("Long executed at {:.2}", exec_price);
                     self.pos = Position::Long;
-                    let sl = Self::stop_loss_price(price, 50.00, 0.015, 0.05, self.pos);
+                    let sl = Self::stop_loss_price(price, 50.00, 20.00, 0.05, self.pos);
                     self.open_pos = OpenPosition {
                         id: Uuid::new_v4(),
                         pos: Position::Long,
@@ -466,7 +470,7 @@ impl Bot {
                     let exec_price = exchange.place_market_order(OrderSide::Sell, size).await?;
                     info!("Short executed at {:.2}", exec_price);
                     self.pos = Position::Short;
-                    let sl = Self::stop_loss_price(price, 50.00, 0.015, 0.05, self.pos);
+                    let sl = Self::stop_loss_price(price, 50.00, 20.00, 0.05, self.pos);
                     self.open_pos = OpenPosition {
                         id: Uuid::new_v4(),
                         pos: Position::Short,
@@ -487,7 +491,8 @@ impl Bot {
 
             Position::Long => {
                 //Trigger SL if it's met
-                if Self::should_close(price, self.pos, self.open_pos.sl.unwrap_or(0.00)) {
+                let in_sl = Self::stop_loss_price(price, 50.00, 20.00, 0.05, Position::Long);
+                if Self::should_close(price, self.pos, self.open_pos.sl.unwrap_or(in_sl)) {
                     Self::close_long_position(self, price).await;
                     warn!(
                         "SL for Long Position entered at {:2}, with SL triggered at {:2}",
@@ -521,8 +526,9 @@ impl Bot {
             }
 
             Position::Short => {
+                let in_sl = Self::stop_loss_price(price, 50.00, 20.00, 0.05, Position::Short);
                 //Trigger SL if it's met
-                if Self::should_close(price, self.pos, self.open_pos.sl.unwrap_or(0.00)) {
+                if Self::should_close(price, self.pos, self.open_pos.sl.unwrap_or(in_sl)) {
                     Self::close_short_position(self, price).await;
                     warn!(
                         "SL for Short Position entered at {:2}, with SL triggered at {:2}",

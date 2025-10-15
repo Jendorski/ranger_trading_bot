@@ -4,6 +4,7 @@ use std::{error::Error, time::Duration};
 use log::{info, warn};
 use tokio::time;
 
+use crate::bot::Bot;
 use crate::cache::RedisClient;
 use crate::config::Config;
 use crate::exchange::{Exchange, OrderSide};
