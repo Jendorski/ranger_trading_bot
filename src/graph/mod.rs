@@ -212,8 +212,7 @@ impl Graph {
     pub fn is_midnight() -> bool {
         let now = Local::now();
         info!("now.hour -> {:2}", now.hour());
-        info!("now.minute -> {:2}", now.minute());
-        now.hour() == 00 && now.minute() == 00
+        now.hour() == 00 //&& now.minute() == 0
     }
 
     /// The leverage is the contract size in base units.  
