@@ -536,22 +536,24 @@ impl Bot {
             Position::Long => {
                 //Trigger SL if it's met
                 let in_sl = Self::stop_loss_price(
-                    price,
+                    self.open_pos.entry_price,
                     config.margin,
                     config.leverage,
                     config.risk_pct,
                     Position::Long,
                 );
-                let should_close =
-                    Self::should_close(price, self.pos, self.open_pos.sl.unwrap_or(in_sl));
+                let should_close = Self::should_close(
+                    self.open_pos.entry_price,
+                    self.pos,
+                    self.open_pos.sl.unwrap_or(in_sl),
+                );
                 warn!("should_close -> {:?}, in_sl -> {:?}", should_close, in_sl);
                 if should_close {
                     Self::close_long_position(self, price).await;
 
                     warn!(
                         "SL for Long Position entered at {:2}, with SL triggered at {:2}",
-                        self.open_pos.entry_price,
-                        self.open_pos.sl.unwrap()
+                        self.open_pos.entry_price, price
                     );
 
                     self.pos = Position::Flat;
@@ -572,24 +574,26 @@ impl Bot {
             }
 
             Position::Short => {
+                //Trigger SL if it's met
                 let in_sl = Self::stop_loss_price(
-                    price,
+                    self.open_pos.entry_price,
                     config.margin,
                     config.leverage,
                     config.risk_pct,
-                    Position::Short,
+                    Position::Long,
                 );
-                //Trigger SL if it's met
-                let should_close =
-                    Self::should_close(price, self.pos, self.open_pos.sl.unwrap_or(in_sl));
-                warn!("should_close -> {:?}, in_sl -> {:?}", should_close, in_sl);
+                let should_close = Self::should_close(
+                    self.open_pos.entry_price,
+                    self.pos,
+                    self.open_pos.sl.unwrap_or(in_sl),
+                );
+
                 if should_close {
                     Self::close_short_position(self, price).await;
 
                     warn!(
                         "SL for Short Position entered at {:2}, with SL triggered at {:2}",
-                        self.open_pos.entry_price,
-                        self.open_pos.sl.unwrap_or(0.00)
+                        self.open_pos.entry_price, price
                     );
 
                     self.pos = Position::Flat;
