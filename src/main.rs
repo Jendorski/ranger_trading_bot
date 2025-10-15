@@ -88,10 +88,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // 4️⃣ Poll loop
     let mut interval = time::interval(Duration::from_secs(cfg.poll_interval_secs));
-    if Graph::is_midnight() {
-        warn!("It's midnight now!");
-        Graph::prepare_cumulative_weekly_monthly(redis_conn.clone()).await?;
-    }
 
     loop {
         interval.tick().await;
@@ -106,6 +102,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             Err(err) => eprintln!("Failed to fetch price: {err}"),
+        }
+
+        if Graph::is_midnight() {
+            warn!("It's midnight now!");
+            Graph::prepare_cumulative_weekly_monthly(redis_conn.clone()).await?;
         }
     }
 }
