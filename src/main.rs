@@ -107,6 +107,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         if Graph::is_midnight() {
             warn!("It's midnight now!");
             Graph::prepare_cumulative_weekly_monthly(redis_conn.clone()).await?;
+
+            Graph::all_trade_compute(redis_conn.clone()).await?;
         }
     }
 }

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use anyhow::anyhow;
 use chrono::{Datelike, Local, Timelike};
-use log::warn;
+use log::info;
 use redis::{AsyncCommands, aio::MultiplexedConnection};
 use serde_json;
 use std::collections::BTreeMap;
@@ -24,13 +24,13 @@ impl Graph {
     }
 
     /// Absolute profit in USD assuming we always invest `notional` dollars at entry.
-    fn pnl_absolute(entry: f64, exit: f64, notional: f64) -> f64 {
-        if entry == 0.00 || exit == 0.00 {
-            return 0.00;
-        }
-        let qty = notional / entry; // BTC amount bought/sold
-        (exit - entry) * qty // USD profit/loss
-    }
+    // fn pnl_absolute(entry: f64, exit: f64, notional: f64) -> f64 {
+    //     if entry == 0.00 || exit == 0.00 {
+    //         return 0.00;
+    //     }
+    //     let qty = notional / entry; // BTC amount bought/sold
+    //     (exit - entry) * qty // USD profit/loss
+    // }
 
     /// Map `(year, week)` → cumulative ROI (as a fraction, e.g., 0.05 = +5 %)
     pub fn cumulative_roi_weekly(positions: &[bot::ClosedPosition]) -> BTreeMap<(i32, u32), f64> {
@@ -102,37 +102,37 @@ impl Graph {
             .collect()
     }
 
-    const NOTIONAL_PER_TRADE: f64 = 50.0; // e.g., $10 k per BTC
+    // const NOTIONAL_PER_TRADE: f64 = 50.0; // e.g., $10 k per BTC
 
     /// ROI per week as a fraction of *total* capital invested that week.
-    pub fn roi_weekly_absolute(positions: &[bot::ClosedPosition]) -> HashMap<(i32, u32), f64> {
-        let mut profit_map: HashMap<(i32, u32), f64> = HashMap::new();
-        let mut cap_map: HashMap<(i32, u32), f64> = HashMap::new();
+    // pub fn roi_weekly_absolute(positions: &[bot::ClosedPosition]) -> HashMap<(i32, u32), f64> {
+    //     let mut profit_map: HashMap<(i32, u32), f64> = HashMap::new();
+    //     let mut cap_map: HashMap<(i32, u32), f64> = HashMap::new();
 
-        for pos in positions {
-            let iso = pos.exit_time.iso_week();
-            let key = (iso.year(), iso.week());
-            let profit =
-                Self::pnl_absolute(pos.entry_price, pos.exit_price, Self::NOTIONAL_PER_TRADE);
-            *profit_map.entry(key).or_insert(0.0) += profit;
-            *cap_map.entry(key).or_insert(0.0) += Self::NOTIONAL_PER_TRADE;
-        }
+    //     for pos in positions {
+    //         let iso = pos.exit_time.iso_week();
+    //         let key = (iso.year(), iso.week());
+    //         let profit =
+    //             Self::pnl_absolute(pos.entry_price, pos.exit_price, Self::NOTIONAL_PER_TRADE);
+    //         *profit_map.entry(key).or_insert(0.0) += profit;
+    //         *cap_map.entry(key).or_insert(0.0) += Self::NOTIONAL_PER_TRADE;
+    //     }
 
-        // ROI = profit / capital invested
-        profit_map
-            .into_iter()
-            .map(|(k, p)| (k, p / cap_map[&k]))
-            .collect()
-    }
+    //     // ROI = profit / capital invested
+    //     profit_map
+    //         .into_iter()
+    //         .map(|(k, p)| (k, p / cap_map[&k]))
+    //         .collect()
+    // }
 
     /// Map `(year, week)` → average % return
-    pub fn avg_pnl_weekly(positions: &[bot::ClosedPosition]) -> BTreeMap<(i32, u32), f64> {
-        let grouped = Self::group_by_week(positions);
-        grouped
-            .into_iter()
-            .map(|(k, v)| (k, v.iter().sum::<f64>() / v.len() as f64))
-            .collect()
-    }
+    // pub fn avg_pnl_weekly(positions: &[bot::ClosedPosition]) -> BTreeMap<(i32, u32), f64> {
+    //     let grouped = Self::group_by_week(positions);
+    //     grouped
+    //         .into_iter()
+    //         .map(|(k, v)| (k, v.iter().sum::<f64>() / v.len() as f64))
+    //         .collect()
+    // }
 
     /// Average PnL % for each week (ISO year‑week)
     // pub fn avg_pnl_weekly(positions: &[ClosedPosition]) -> HashMap<(i32, u32), f64> {
@@ -143,13 +143,13 @@ impl Graph {
     // }
 
     /// Map `(year, month)` → average % return
-    pub fn avg_pnl_monthly(positions: &[bot::ClosedPosition]) -> BTreeMap<(i32, u32), f64> {
-        let grouped = Self::group_by_month(positions);
-        grouped
-            .into_iter()
-            .map(|(k, v)| (k, v.iter().sum::<f64>() / v.len() as f64))
-            .collect()
-    }
+    // pub fn avg_pnl_monthly(positions: &[bot::ClosedPosition]) -> BTreeMap<(i32, u32), f64> {
+    //     let grouped = Self::group_by_month(positions);
+    //     grouped
+    //         .into_iter()
+    //         .map(|(k, v)| (k, v.iter().sum::<f64>() / v.len() as f64))
+    //         .collect()
+    // }
 
     // /// Average PnL % for each month
     // pub fn avg_pnl_monthly(positions: &[ClosedPosition]) -> HashMap<(i32, u32), f64> {
@@ -211,12 +211,14 @@ impl Graph {
     /// Returns **true** iff the supplied `DateTime<Utc>` is exactly midnight (00:00).
     pub fn is_midnight() -> bool {
         let now = Local::now();
-        now.hour() == 0 && now.minute() == 0
+        info!("now.hour -> {:2}", now.hour());
+        info!("now.minute -> {:2}", now.minute());
+        now.hour() == 00 && now.minute() == 00
     }
 
     /// The leverage is the contract size in base units.  
     /// For BTC‑futures on most exchanges it’s `1.0` (i.e. one contract = 1 BTC).
-    fn calculate_futures_pnl(pos: &bot::ClosedPosition, multiplier: f64) -> f64 {
+    fn calculate_futures_pnl(pos: &bot::ClosedPosition) -> f64 {
         if pos.entry_price == 0.00 || pos.exit_price == 0.00 {
             return 0.00;
         }
@@ -240,7 +242,7 @@ impl Graph {
     }
 
     /// Margin that was required to open this position.
-    fn margin_used(pos: &bot::ClosedPosition, leverage: f64) -> f64 {
+    pub fn margin_used(pos: &bot::ClosedPosition, leverage: f64) -> f64 {
         let mut qty = pos.quantity;
         if qty == Some(0.00) {
             qty = Some(0.029);
@@ -249,8 +251,8 @@ impl Graph {
     }
 
     /// PnL and ROI relative to the margin you actually put up.
-    fn pnl_and_roi(pos: &bot::ClosedPosition, multiplier: f64, leverage: f64) -> (f64, f64) {
-        let pnl = Self::calculate_futures_pnl(pos, multiplier);
+    fn pnl_and_roi(pos: &bot::ClosedPosition, leverage: f64) -> (f64, f64) {
+        let pnl = Self::calculate_futures_pnl(pos);
         let margin = Self::margin_used(pos, leverage);
         let mut roi: f64 = 0.00; // fraction – multiply by 100 for percent
         if pnl != 0.00 && margin != 0.00 {
@@ -265,7 +267,7 @@ impl Graph {
         let positions = Self::load_all_closed_positions(&mut conn).await?;
 
         let leverage = 35.0; // 35× for both long & short
-        let multiplier = 0.029; // 1 BTC per contract (adjust if you use a different size)
+        //let multiplier = 0.029; // 1 BTC per contract (adjust if you use a different size)
 
         println!(
             "{:<36} {:<6} {:>10} {:>10} {:>12} {:>12}",
@@ -275,7 +277,7 @@ impl Graph {
         let mut total_margin: f64 = 0.0;
 
         for pos in &positions {
-            let (pnl, roi) = Self::pnl_and_roi(pos, multiplier, leverage);
+            let (pnl, roi) = Self::pnl_and_roi(pos, leverage);
             println!(
                 "{:36} {:<36} {:<6} {:>10.2} {:>10.2} {:>12.2} {:>12.5} %",
                 pos.exit_time.format("%Y-%m-%d][%H:%M:%S"),
@@ -320,9 +322,42 @@ impl Graph {
         // 1. Average % PnL per week
         // ------------------------------------------------------------------
         // println!("--- Avg PnL % per week ---");
-        // for ((y, w), pct) in Self::avg_pnl_weekly(&positions) {
-        //     println!("{:04}-W{:02}: {:.2} %", y, w, pct);
-        // }
+        let mut total_pnl: f64 = 0.0;
+        let mut total_margin: f64 = 0.0;
+
+        for pos in &positions {
+            let (pnl, roi) = Self::pnl_and_roi(pos, 35.00);
+            println!(
+                "{:36} {:<36} {:<6} {:>10.2} {:>10.2} {:>12.2} {:>12.5} %",
+                pos.exit_time.format("%Y-%m-%d][%H:%M:%S"),
+                pos.id,
+                format!("{:?}", pos.position),
+                pos.entry_price,
+                pos.exit_price,
+                pnl,
+                roi
+            );
+
+            total_pnl += pnl;
+            total_margin += Self::margin_used(pos, 35.0);
+        }
+
+        // ----- Aggregated results --------------------------------------------
+        println!("\nTotal realised PnL: ${:.2}", total_pnl);
+        println!(
+            "Total margin used (across all trades): ${:.2}",
+            total_margin
+        );
+
+        let overall_roi = if total_margin != 0.0 {
+            total_pnl / total_margin
+        } else {
+            0.0
+        };
+        println!(
+            "Overall ROI on the capital you actually put in: {:.2}%",
+            overall_roi * 100.0
+        );
 
         println!("--- Cumulative ROI % per week ---");
         for ((y, w), pct) in Self::cumulative_roi_weekly(&positions) {
