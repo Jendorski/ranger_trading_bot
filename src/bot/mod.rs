@@ -535,8 +535,17 @@ impl Bot {
 
             Position::Long => {
                 //Trigger SL if it's met
-                let in_sl = Self::stop_loss_price(price, 50.00, 20.00, 0.05, Position::Long);
-                if Self::should_close(price, self.pos, self.open_pos.sl.unwrap_or(in_sl)) {
+                let in_sl = Self::stop_loss_price(
+                    price,
+                    config.margin,
+                    config.leverage,
+                    config.risk_pct,
+                    Position::Long,
+                );
+                let should_close =
+                    Self::should_close(price, self.pos, self.open_pos.sl.unwrap_or(in_sl));
+                warn!("should_close -> {:?}", should_close);
+                if should_close {
                     Self::close_long_position(self, price).await;
 
                     warn!(
@@ -563,9 +572,18 @@ impl Bot {
             }
 
             Position::Short => {
-                let in_sl = Self::stop_loss_price(price, 50.00, 20.00, 0.05, Position::Short);
+                let in_sl = Self::stop_loss_price(
+                    price,
+                    config.margin,
+                    config.leverage,
+                    config.risk_pct,
+                    Position::Short,
+                );
                 //Trigger SL if it's met
-                if Self::should_close(price, self.pos, self.open_pos.sl.unwrap_or(in_sl)) {
+                let should_close =
+                    Self::should_close(price, self.pos, self.open_pos.sl.unwrap_or(in_sl));
+                warn!("should_close -> {:?}", should_close);
+                if should_close {
                     Self::close_short_position(self, price).await;
 
                     warn!(
