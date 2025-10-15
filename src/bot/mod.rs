@@ -487,7 +487,7 @@ impl Bot {
 
             Position::Long => {
                 //Trigger SL if it's met
-                if Self::should_close(price, self.pos, self.open_pos.sl.unwrap()) {
+                if Self::should_close(price, self.pos, self.open_pos.sl.unwrap_or(0.00)) {
                     Self::close_long_position(self, price).await;
                     warn!(
                         "SL for Long Position entered at {:2}, with SL triggered at {:2}",
@@ -525,7 +525,7 @@ impl Bot {
                 if Self::should_close(price, self.pos, self.open_pos.sl.unwrap_or(0.00)) {
                     Self::close_short_position(self, price).await;
                     warn!(
-                        "SL for Long Position entered at {:2}, with SL triggered at {:2}",
+                        "SL for Short Position entered at {:2}, with SL triggered at {:2}",
                         self.open_pos.entry_price,
                         self.open_pos.sl.unwrap_or(0.00)
                     );
