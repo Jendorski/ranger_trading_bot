@@ -103,4 +103,26 @@ impl Helper {
 
         return pl * leverage * 100.00;
     }
+
+    pub fn stop_loss_price(
+        entry_price: f64,
+        margin: f64,
+        leverage: f64,
+        risk_pct: f64,
+        pos: Position,
+    ) -> f64 {
+        let desired_loss = margin * risk_pct; // $4.65
+        let position_size = Helper::position_size(margin, leverage);
+        let delta_price = (desired_loss / position_size) * entry_price; //desired_loss / quantity; // how many dollars of price change
+
+        if pos == Position::Long {
+            return entry_price - delta_price;
+        }
+
+        if pos == Position::Short {
+            return entry_price + delta_price;
+        }
+
+        0.00
+    }
 }
