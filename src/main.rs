@@ -93,6 +93,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // 4️⃣ Poll loop
     let mut interval = time::interval(Duration::from_secs(cfg.poll_interval_secs));
 
+    Graph::prepare_cumulative_weekly_monthly(&mut graph, redis_conn.clone()).await?;
+
     loop {
         interval.tick().await;
 

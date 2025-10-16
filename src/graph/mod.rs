@@ -322,7 +322,7 @@ impl Graph {
         // println!("--- Avg PnL % per week ---");
 
         println!(
-            "{:<36} {:<36} {:<6} {:>10} {:>10} {:>12} {:>12}",
+            "{:<36} {:<36} {:<6} {:>10} {:>10} {:>4.3} {:>4.3}",
             "Date", "ID", "Side", "Entry", "Exit", "PnL ($)", "ROI (%)"
         );
         let mut total_pnl: f64 = 0.0;
@@ -331,7 +331,7 @@ impl Graph {
         for pos in &positions {
             let (pnl, roi) = Self::pnl_and_roi(self, pos);
             println!(
-                "{:36} {:<36} {:<6} {:>10.2} {:>10.2} {:>12} {:>12} %",
+                "{:36} {:<36} {:<6} {:>10.2} {:>10.2} {:>4.3} {:>4.3} %",
                 pos.exit_time.format("%Y-%m-%d][%H:%M:%S"),
                 pos.id,
                 format!("{:?}", pos.position),
