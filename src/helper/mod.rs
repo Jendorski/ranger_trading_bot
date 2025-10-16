@@ -21,6 +21,10 @@ impl Helper {
     ) -> f64 {
         let mut pnl = 0.00;
 
+        if !entry_price.is_finite() || !exit_price.is_finite() {
+            pnl = 0.00;
+        }
+
         if pos == Position::Long {
             pnl = exit_price - entry_price;
         }
@@ -53,6 +57,11 @@ impl Helper {
         let pnl = Self::compute_pnl(pos, entry_price, position_size, exit_price);
 
         let mut roi: f64 = 0.00; // fraction – multiply by 100 for percent
+
+        if !pnl.is_finite() && !margin.is_finite() {
+            roi = (pnl / margin) * 100.0;
+        }
+
         if pnl != 0.00 && margin != 0.00 {
             roi = (pnl / margin) * 100.0;
         }
@@ -78,6 +87,10 @@ impl Helper {
 
     /// Percentage PnL of a single trade
     pub fn pnl_percent(entry: f64, exit: f64, leverage: f64) -> f64 {
+        if !entry.is_finite() || !exit.is_finite() {
+            return 0.00;
+        }
+
         if entry == 0.00 || exit == 0.00 {
             return 0.00;
         }
