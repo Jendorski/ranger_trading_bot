@@ -25,6 +25,10 @@ pub struct Config {
     pub leverage: f64,
 
     pub risk_pct: f64,
+
+    pub is_scalp: bool,
+
+    pub scalp_price_difference: f64,
 }
 
 fn default_interval() -> u64 {
@@ -64,6 +68,16 @@ impl Config {
             .and_then(|v| v.parse::<f64>().ok())
             .unwrap_or(0.05);
 
+        let scalp_price_difference = env::var("SCALP_PRICE_DIFFERENCE")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(500.0);
+
+        let is_scalp = env::var("IS_SCALP")
+            .ok()
+            .and_then(|v| v.parse::<bool>().ok())
+            .unwrap_or(false);
+
         Ok(Config {
             api_key,
             api_secret,
@@ -73,6 +87,8 @@ impl Config {
             margin,
             leverage,
             risk_pct,
+            is_scalp,
+            scalp_price_difference,
         })
     }
 }

@@ -456,6 +456,46 @@ impl Bot {
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
     }
 
+    pub async fn take_profit_on_long(
+        &mut self,
+        price: f64,
+        size: f64,
+        config: &mut Config,
+        exchange: &dyn Exchange,
+    ) -> Result<()> {
+        info!("Taking profit on LONG at {:.2}", price);
+
+        let exec_price = exchange.place_market_order(OrderSide::Sell, size).await?;
+
+        info!("Closed LONG at {:.2}", exec_price);
+
+        Self::close_long_position(self, price, config).await;
+
+        self.pos = Position::Flat;
+
+        Ok(())
+    }
+
+    pub async fn take_profit_on_short(
+        &mut self,
+        price: f64,
+        size: f64,
+        config: &mut Config,
+        exchange: &dyn Exchange,
+    ) -> Result<()> {
+        info!("Covering SHORT at {:.2}", price);
+
+        let exec_price = exchange.place_market_order(OrderSide::Buy, size).await?;
+
+        info!("Covered SHORT at {:.2}", exec_price);
+
+        Self::close_short_position(self, price, config).await;
+
+        self.pos = Position::Flat;
+
+        Ok(())
+    }
+
     pub async fn run_cycle(
         &mut self,
         price: f64,
@@ -535,17 +575,25 @@ impl Bot {
                     self.pos = Position::Flat;
                 }
 
+                //Operation scalp, if set
+                if config.is_scalp {
+                    let config_diff = config.scalp_price_difference;
+                    let diff = Helper::calc_price_difference(
+                        self.open_pos.entry_price,
+                        price,
+                        Position::Long,
+                    );
+                    info!("diff >= config_diff {:2.2} >= {:2.2}", diff, config_diff);
+
+                    if diff >= config_diff {
+                        //Take your profits and get out!
+                        Self::take_profit_on_long(self, price, size, config, exchange).await?;
+                    }
+                }
+
                 // 2️⃣ Take‑profit: exit long when we hit the short zone.
                 if self.zones.short_zones.iter().any(|z| z.contains(price)) {
-                    info!("Taking profit on LONG at {:.2}", price);
-
-                    let exec_price = exchange.place_market_order(OrderSide::Sell, size).await?;
-
-                    info!("Closed LONG at {:.2}", exec_price);
-
-                    Self::close_long_position(self, price, config).await;
-
-                    self.pos = Position::Flat;
+                    Self::take_profit_on_long(self, price, size, config, exchange).await?;
                 }
             }
 
@@ -572,17 +620,25 @@ impl Bot {
                     self.pos = Position::Flat;
                 }
 
+                //Operation scalp, if set
+                if config.is_scalp {
+                    let config_diff = config.scalp_price_difference;
+                    let diff = Helper::calc_price_difference(
+                        self.open_pos.entry_price,
+                        price,
+                        Position::Short,
+                    );
+                    info!("diff >= config_diff {:2.2} >= {:2.2}", diff, config_diff);
+
+                    if diff >= config_diff {
+                        //Take your profits and get out!
+                        Self::take_profit_on_short(self, price, size, config, exchange).await?;
+                    }
+                }
+
                 // 3️⃣ Cover: exit short when we hit the long zone.
                 if self.zones.long_zones.iter().any(|z| z.contains(price)) {
-                    info!("Covering SHORT at {:.2}", price);
-
-                    let exec_price = exchange.place_market_order(OrderSide::Buy, size).await?;
-
-                    info!("Covered SHORT at {:.2}", exec_price);
-
-                    Self::close_short_position(self, price, config).await;
-
-                    self.pos = Position::Flat;
+                    Self::take_profit_on_short(self, price, size, config, exchange).await?;
                 }
             }
         }

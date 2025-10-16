@@ -257,56 +257,56 @@ impl Graph {
         (pnl, roi)
     }
 
-    pub async fn all_trade_compute(
-        &mut self,
-        mut conn: redis::aio::MultiplexedConnection,
-    ) -> anyhow::Result<()> {
-        let positions = Self::load_all_closed_positions(&mut conn).await?;
-        let margin_config = self.config.margin;
+    // pub async fn all_trade_compute(
+    //     &mut self,
+    //     mut conn: redis::aio::MultiplexedConnection,
+    // ) -> anyhow::Result<()> {
+    //     let positions = Self::load_all_closed_positions(&mut conn).await?;
+    //     let margin_config = self.config.margin;
 
-        println!(
-            "{:<36} {:<36} {:<6} {:>10} {:>10} {:>12} {:>12}",
-            "Date", "ID", "Side", "Entry", "Exit", "PnL ($)", "ROI (%)"
-        );
-        let mut total_pnl: f64 = 0.0;
-        let mut total_margin: f64 = 0.0;
+    //     println!(
+    //         "{:<36} {:<36} {:<6} {:>10} {:>10} {:>12} {:>12}",
+    //         "Date", "ID", "Side", "Entry", "Exit", "PnL ($)", "ROI (%)"
+    //     );
+    //     let mut total_pnl: f64 = 0.0;
+    //     let mut total_margin: f64 = 0.0;
 
-        for pos in &positions {
-            let (pnl, roi) = Self::pnl_and_roi(self, pos);
-            println!(
-                "{:36} {:<36} {:<6} {:>10.2} {:>10.2} {:>12.2} {:>12.5} %",
-                pos.exit_time.format("[%Y-%m-%d][%H:%M:%S]"),
-                pos.id,
-                format!("{:?}", pos.position),
-                pos.entry_price,
-                pos.exit_price,
-                pnl,
-                roi
-            );
+    //     for pos in &positions {
+    //         let (pnl, roi) = Self::pnl_and_roi(self, pos);
+    //         println!(
+    //             "{:36} {:<36} {:<6} {:>10.2} {:>10.2} {:>12.2} {:>12.5} %",
+    //             pos.exit_time.format("[%Y-%m-%d][%H:%M:%S]"),
+    //             pos.id,
+    //             format!("{:?}", pos.position),
+    //             pos.entry_price,
+    //             pos.exit_price,
+    //             pnl,
+    //             roi
+    //         );
 
-            total_pnl += pnl;
-            total_margin += pos.margin.unwrap_or(margin_config);
-        }
+    //         total_pnl += pnl;
+    //         total_margin += pos.margin.unwrap_or(margin_config);
+    //     }
 
-        // ----- Aggregated results --------------------------------------------
-        println!("\nTotal realised PnL: ${:.2}", total_pnl);
-        println!(
-            "Total margin used (across all trades): ${:.2}",
-            total_margin
-        );
+    //     // ----- Aggregated results --------------------------------------------
+    //     println!("\nTotal realised PnL: ${:.2}", total_pnl);
+    //     println!(
+    //         "Total margin used (across all trades): ${:.2}",
+    //         total_margin
+    //     );
 
-        let overall_roi = if total_margin != 0.0 {
-            total_pnl / total_margin
-        } else {
-            0.0
-        };
-        println!(
-            "Overall ROI on the capital you actually put in: {:.2}%",
-            overall_roi * 100.0
-        );
+    //     let overall_roi = if total_margin != 0.0 {
+    //         total_pnl / total_margin
+    //     } else {
+    //         0.0
+    //     };
+    //     println!(
+    //         "Overall ROI on the capital you actually put in: {:.2}%",
+    //         overall_roi * 100.0
+    //     );
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     pub async fn prepare_cumulative_weekly_monthly(
         &mut self,

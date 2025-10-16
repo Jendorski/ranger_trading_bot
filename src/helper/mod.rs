@@ -125,4 +125,18 @@ impl Helper {
 
         0.00
     }
+
+    pub fn calc_price_difference(entry_price: f64, current_price: f64, pos: Position) -> f64 {
+        if entry_price.is_finite() && current_price.is_finite() {
+            if pos == Position::Long {
+                return current_price - entry_price;
+            }
+
+            if pos == Position::Short {
+                return entry_price - current_price;
+            }
+        }
+
+        return 0.00;
+    }
 }
