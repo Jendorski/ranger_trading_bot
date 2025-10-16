@@ -8,12 +8,14 @@ use crate::cache::RedisClient;
 use crate::config::Config;
 use crate::exchange::{Exchange, OrderSide};
 use crate::graph::Graph;
+use crate::helper::Helper;
 
 mod bot;
 mod cache;
 mod config;
 mod exchange;
 mod graph;
+mod helper;
 
 // use btc_trading_bot::{
 //     bot::Bot,
@@ -86,8 +88,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // 3️⃣ Bot state
     let mut bot = bot::Bot::new(redis_conn.clone()).await?;
 
+    let mut graph = graph::Graph::new();
+
     // 4️⃣ Poll loop
     let mut interval = time::interval(Duration::from_secs(cfg.poll_interval_secs));
+
+    warn!("It's midnight now!");
+    Graph::prepare_cumulative_weekly_monthly(&mut graph, redis_conn.clone()).await?;
+
+    Graph::all_trade_compute(&mut graph, redis_conn.clone()).await?;
 
     loop {
         interval.tick().await;
@@ -101,11 +110,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Err(err) => eprintln!("Failed to fetch price: {err}"),
         }
 
-        if Graph::is_midnight() {
-            warn!("It's midnight now!");
-            Graph::prepare_cumulative_weekly_monthly(redis_conn.clone()).await?;
+        // if Helper::is_midnight() {
+        //     warn!("It's midnight now!");
+        //     Graph::prepare_cumulative_weekly_monthly(&mut graph, redis_conn.clone()).await?;
 
-            Graph::all_trade_compute(redis_conn.clone()).await?;
-        }
+        //     Graph::all_trade_compute(&mut graph, redis_conn.clone()).await?;
+        // }
     }
 }

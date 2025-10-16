@@ -1,26 +1,24 @@
 use anyhow::Result;
 use anyhow::anyhow;
 use chrono::{Datelike, Local, Timelike};
-use log::info;
 use redis::{AsyncCommands, aio::MultiplexedConnection};
 use serde_json;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
 use crate::bot::{self};
+use crate::config::Config;
+use crate::helper::Helper;
 
 pub struct Graph {
-    //pub btc_traded: f64,
+    pub config: Config,
 }
 
 impl Graph {
-    /// Percentage PnL of a single trade
-    fn pnl_percent(entry: f64, exit: f64) -> f64 {
-        if entry == 0.00 || exit == 0.00 {
-            return 0.00;
-        }
+    pub fn new() -> Self {
+        let config = Config::from_env().expect("NO CONFIGURATION");
 
-        (exit - entry) / entry * 100.0
+        Self { config }
     }
 
     /// Absolute profit in USD assuming we always invest `notional` dollars at entry.
@@ -33,8 +31,11 @@ impl Graph {
     // }
 
     /// Map `(year, week)` → cumulative ROI (as a fraction, e.g., 0.05 = +5 %)
-    pub fn cumulative_roi_weekly(positions: &[bot::ClosedPosition]) -> BTreeMap<(i32, u32), f64> {
-        let grouped = Self::group_by_week(positions);
+    pub fn cumulative_roi_weekly(
+        &mut self,
+        positions: &[bot::ClosedPosition],
+    ) -> BTreeMap<(i32, u32), f64> {
+        let grouped = Self::group_by_week(self, positions);
         grouped
             .into_iter()
             .map(|(k, pcts)| {
@@ -88,8 +89,11 @@ impl Graph {
     // }
 
     /// Same idea, but by calendar month
-    pub fn cumulative_roi_monthly(positions: &[bot::ClosedPosition]) -> BTreeMap<(i32, u32), f64> {
-        let grouped = Self::group_by_month(positions);
+    pub fn cumulative_roi_monthly(
+        &mut self,
+        positions: &[bot::ClosedPosition],
+    ) -> BTreeMap<(i32, u32), f64> {
+        let grouped = Self::group_by_month(self, positions);
         grouped
             .into_iter()
             .map(|(k, pcts)| {
@@ -178,99 +182,99 @@ impl Graph {
     }
 
     /// Returns a map `[(year, week), Vec<pnl_percent>]`
-    pub fn group_by_week(positions: &[bot::ClosedPosition]) -> HashMap<(i32, u32), Vec<f64>> {
+    pub fn group_by_week(
+        &mut self,
+        positions: &[bot::ClosedPosition],
+    ) -> HashMap<(i32, u32), Vec<f64>> {
         let mut map: HashMap<(i32, u32), Vec<f64>> = HashMap::new();
         for pos in positions {
             let iso = pos.exit_time.iso_week(); // ISO‑8601 week (Mon–Sun)
             let key = (iso.year(), iso.week());
 
             if pos.entry_price != 0.0 && pos.exit_price != 0.0 {
-                map.entry(key)
-                    .or_default()
-                    .push(Self::pnl_percent(pos.entry_price, pos.exit_price));
+                let pnl_percent = Helper::pnl_percent(
+                    pos.entry_price,
+                    pos.exit_price,
+                    pos.leverage.unwrap_or(self.config.leverage),
+                );
+                map.entry(key).or_default().push(pnl_percent);
             }
         }
         map
     }
 
     /// Returns a map `[(year, month), Vec<pnl_percent>]`
-    fn group_by_month(positions: &[bot::ClosedPosition]) -> HashMap<(i32, u32), Vec<f64>> {
+    fn group_by_month(
+        &mut self,
+        positions: &[bot::ClosedPosition],
+    ) -> HashMap<(i32, u32), Vec<f64>> {
         let mut map: HashMap<(i32, u32), Vec<f64>> = HashMap::new();
         for pos in positions {
             let key = (pos.exit_time.year(), pos.exit_time.month());
 
             if pos.entry_price != 0.00 && pos.exit_price != 0.00 {
-                map.entry(key)
-                    .or_default()
-                    .push(Self::pnl_percent(pos.entry_price, pos.exit_price));
+                let pnl_percent = Helper::pnl_percent(
+                    pos.entry_price,
+                    pos.exit_price,
+                    pos.leverage.unwrap_or(self.config.leverage),
+                );
+                map.entry(key).or_default().push(pnl_percent);
             }
         }
         map
     }
 
-    /// Returns **true** iff the supplied `DateTime<Utc>` is exactly midnight (00:00).
-    pub fn is_midnight() -> bool {
-        let now = Local::now();
-        info!("now.hour -> {:2}", now.hour());
-        now.hour() == 00 //&& now.minute() == 0
-    }
-
-    /// The leverage is the contract size in base units.  
-    /// For BTC‑futures on most exchanges it’s `1.0` (i.e. one contract = 1 BTC).
-    fn calculate_futures_pnl(pos: &bot::ClosedPosition) -> f64 {
-        if pos.entry_price == 0.00 || pos.exit_price == 0.00 {
-            return 0.00;
-        }
-
-        let qty = pos.quantity;
-
-        let mut diff = 0.00;
-
-        if pos.position == Some(bot::Position::Long) {
-            diff = pos.exit_price - pos.entry_price;
-        }
-
-        if pos.position == Some(bot::Position::Short) {
-            diff = pos.entry_price - pos.exit_price
-        }
-
-        diff * qty.unwrap_or_default()
-    }
-
-    /// Margin that was required to open this position.
-    pub fn margin_used(pos: &bot::ClosedPosition, leverage: f64) -> f64 {
-        let qty = pos.quantity;
-        (pos.entry_price * qty.unwrap_or_default()) / leverage
-    }
-
     /// PnL and ROI relative to the margin you actually put up.
-    fn pnl_and_roi(pos: &bot::ClosedPosition, leverage: f64) -> (f64, f64) {
-        let pnl = Self::calculate_futures_pnl(pos);
-        let margin = Self::margin_used(pos, leverage);
+    fn pnl_and_roi(&mut self, pos: &bot::ClosedPosition) -> (f64, f64) {
+        let qty = Helper::contract_amount(
+            pos.entry_price,
+            pos.margin.unwrap_or(self.config.margin),
+            pos.leverage.unwrap_or(self.config.leverage),
+        );
+
+        let pnl = Helper::compute_pnl(
+            pos.position.unwrap_or(bot::Position::Flat),
+            pos.entry_price,
+            pos.quantity.unwrap_or(qty),
+            pos.exit_price,
+        );
+
+        let margin = pos.margin.unwrap_or(self.config.margin); //Self::margin_used(pos, leverage);
+
         let mut roi: f64 = 0.00; // fraction – multiply by 100 for percent
+
         if pnl != 0.00 && margin != 0.00 {
-            roi = (pnl / margin) * 100.0;
+            roi = Helper::calc_roi(
+                &mut Helper::from_config(),
+                margin,
+                pos.entry_price,
+                pos.position.unwrap_or(bot::Position::Flat),
+                pos.quantity.unwrap_or(qty),
+                pos.exit_price,
+            )
         }
         (pnl, roi)
     }
 
     pub async fn all_trade_compute(
+        &mut self,
         mut conn: redis::aio::MultiplexedConnection,
     ) -> anyhow::Result<()> {
         let positions = Self::load_all_closed_positions(&mut conn).await?;
+        let margin_config = self.config.margin;
 
         println!(
-            "{:<36} {:<6} {:>10} {:>10} {:>12} {:>12}",
-            "ID", "Side", "Entry", "Exit", "PnL ($)", "ROI (%)"
+            "{:<36} {:<36} {:<6} {:>10} {:>10} {:>12} {:>12}",
+            "Date", "ID", "Side", "Entry", "Exit", "PnL ($)", "ROI (%)"
         );
         let mut total_pnl: f64 = 0.0;
         let mut total_margin: f64 = 0.0;
 
         for pos in &positions {
-            let (pnl, roi) = Self::pnl_and_roi(pos, pos.leverage.unwrap_or_default());
+            let (pnl, roi) = Self::pnl_and_roi(self, pos);
             println!(
                 "{:36} {:<36} {:<6} {:>10.2} {:>10.2} {:>12.2} {:>12.5} %",
-                pos.exit_time.format("%Y-%m-%d][%H:%M:%S"),
+                pos.exit_time.format("[%Y-%m-%d][%H:%M:%S]"),
                 pos.id,
                 format!("{:?}", pos.position),
                 pos.entry_price,
@@ -280,7 +284,7 @@ impl Graph {
             );
 
             total_pnl += pnl;
-            total_margin += Self::margin_used(pos, pos.leverage.unwrap_or_default());
+            total_margin += pos.margin.unwrap_or(margin_config);
         }
 
         // ----- Aggregated results --------------------------------------------
@@ -304,9 +308,12 @@ impl Graph {
     }
 
     pub async fn prepare_cumulative_weekly_monthly(
+        &mut self,
         mut conn: redis::aio::MultiplexedConnection,
     ) -> anyhow::Result<()> {
         let positions = Self::load_all_closed_positions(&mut conn).await?;
+
+        let margin_config = self.config.margin;
 
         // ------------------------------------------------------------------
         // 1. Average % PnL per week
@@ -316,7 +323,7 @@ impl Graph {
         let mut total_margin: f64 = 0.0;
 
         for pos in &positions {
-            let (pnl, roi) = Self::pnl_and_roi(pos, 35.00);
+            let (pnl, roi) = Self::pnl_and_roi(self, pos);
             println!(
                 "{:36} {:<36} {:<6} {:>10.2} {:>10.2} {:>12.2} {:>12.5} %",
                 pos.exit_time.format("%Y-%m-%d][%H:%M:%S"),
@@ -329,7 +336,7 @@ impl Graph {
             );
 
             total_pnl += pnl;
-            total_margin += Self::margin_used(pos, 35.0);
+            total_margin += pos.margin.unwrap_or(margin_config);
         }
 
         // ----- Aggregated results --------------------------------------------
@@ -350,7 +357,7 @@ impl Graph {
         );
 
         println!("--- Cumulative ROI % per week ---");
-        for ((y, w), pct) in Self::cumulative_roi_weekly(&positions) {
+        for ((y, w), pct) in Self::cumulative_roi_weekly(self, &positions) {
             println!("{:04}-W{:02}: {:.2} %", y, w, pct);
         }
 
@@ -358,7 +365,7 @@ impl Graph {
         // 2. Cumulative ROI per month (as a percent)
         // ------------------------------------------------------------------
         println!("\n--- Cumulative ROI % per month ---");
-        for ((y, m), roi) in Self::cumulative_roi_monthly(&positions) {
+        for ((y, m), roi) in Self::cumulative_roi_monthly(self, &positions) {
             println!("{:04}-{:02}: {:.2} %", y, m, roi * 100.0);
         }
 

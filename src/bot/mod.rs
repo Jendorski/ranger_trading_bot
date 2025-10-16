@@ -37,6 +37,10 @@ impl Default for Zones {
                     high: 100_000.0,
                 },
                 Zone {
+                    low: 102_169.9,
+                    high: 102_297.8,
+                },
+                Zone {
                     low: 105_169.9,
                     high: 106_097.8,
                 },
@@ -146,6 +150,10 @@ impl Default for Zones {
                     low: 109_108.0,
                     high: 109_486.0,
                 },
+                Zone {
+                    low: 101_908.0,
+                    high: 102_000.0,
+                },
             ],
         }
     }
@@ -184,6 +192,7 @@ pub struct ClosedPosition {
     pub sl: Option<f64>,
     pub roi: Option<f64>,
     pub leverage: Option<f64>,
+    pub margin: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -448,6 +457,7 @@ impl Bot {
             sl: self.open_pos.sl,
             roi: Some(Self::calc_roi(self, price)),
             leverage: self.open_pos.leverage,
+            margin: self.open_pos.margin,
         };
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
     }
@@ -466,6 +476,7 @@ impl Bot {
             sl: self.open_pos.sl,
             roi: Some(Self::calc_roi(self, price)),
             leverage: self.open_pos.leverage,
+            margin: self.open_pos.margin,
         };
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
     }
