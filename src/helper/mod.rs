@@ -85,7 +85,6 @@ impl Helper {
     /// Returns **true** iff the supplied `DateTime<Utc>` is exactly midnight (00:00).
     pub fn is_midnight() -> bool {
         let now = Local::now();
-        info!("now.minute -> {:2}", now.minute());
         now.hour() == 00 && now.minute() == 0
     }
 
