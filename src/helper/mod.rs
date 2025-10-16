@@ -39,7 +39,11 @@ impl Helper {
 
         let pos_size = position_size;
 
-        return pnl * pos_size;
+        if pnl.is_finite() && pos_size.is_finite() {
+            return pnl * pos_size;
+        }
+
+        return 0.00;
     }
 
     pub fn position_size(margin: f64, leverage: f64) -> f64 {
