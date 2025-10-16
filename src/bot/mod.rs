@@ -588,10 +588,7 @@ impl Bot {
                         price,
                         Position::Long,
                     );
-                    info!(
-                        "diff >= config_diff {:2.2} >= {:2.2}; min_config_scalp <= {:2.2}",
-                        diff, config_diff, min_config_diff
-                    );
+                    info!("diff >= config_diff {:2.2} >= {:2.2}", diff, config_diff);
 
                     if diff >= config_diff || diff >= min_config_diff {
                         //Take your profits and get out!
@@ -637,10 +634,7 @@ impl Bot {
                         price,
                         Position::Short,
                     );
-                    info!(
-                        "diff >= config_diff {:2.2} >= {:2.2}; min_config_scalp <= {:2.2}",
-                        diff, config_diff, min_config_diff
-                    );
+                    info!("diff >= config_diff {:2.2} >= {:2.2}", diff, config_diff);
 
                     if diff >= config_diff || diff >= min_config_diff {
                         //Take your profits and get out!

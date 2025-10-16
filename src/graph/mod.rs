@@ -1,17 +1,34 @@
 use anyhow::Result;
 use anyhow::anyhow;
+use chrono::NaiveDate;
 use chrono::{Datelike, Local, Timelike};
+use log::info;
 use redis::{AsyncCommands, aio::MultiplexedConnection};
 use serde_json;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
+use crate::bot::ClosedPosition;
 use crate::bot::{self};
 use crate::config::Config;
 use crate::helper::Helper;
 
 pub struct Graph {
     pub config: Config,
+}
+
+#[derive(Debug, Clone)]
+pub struct WeeklyRoi {
+    pub week_start: NaiveDate,
+    pub cumulative_roi: f64,
+    pub position_count: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct MonthlyRoi {
+    pub month: (i32, u32), // (year, month)
+    pub cumulative_roi: f64,
+    pub position_count: usize,
 }
 
 impl Graph {
@@ -21,21 +38,66 @@ impl Graph {
         Self { config }
     }
 
-    /// Absolute profit in USD assuming we always invest `notional` dollars at entry.
-    // fn pnl_absolute(entry: f64, exit: f64, notional: f64) -> f64 {
-    //     if entry == 0.00 || exit == 0.00 {
-    //         return 0.00;
-    //     }
-    //     let qty = notional / entry; // BTC amount bought/sold
-    //     (exit - entry) * qty // USD profit/loss
-    // }
+    pub fn calculate_weekly_roi(positions: &[ClosedPosition]) -> Vec<WeeklyRoi> {
+        let mut weekly_map: BTreeMap<(i32, u32, u32), (f64, usize)> = BTreeMap::new();
 
+        for position in positions {
+            if let Some(roi) = position.roi {
+                let date = position.exit_time.date_naive();
+                let iso_week = date.iso_week();
+                let key = (date.year(), iso_week.week(), 0); // 0 for consistency
+
+                let entry = weekly_map.entry(key).or_insert((0.0, 0));
+                entry.0 += roi;
+                entry.1 += 1;
+            }
+        }
+
+        weekly_map
+            .into_iter()
+            .map(|((year, week, _), (total_roi, count))| {
+                let week_start = NaiveDate::from_isoywd_opt(year, week, chrono::Weekday::Mon)
+                    .unwrap_or_else(|| NaiveDate::from_ymd_opt(year, 1, 1).unwrap());
+
+                WeeklyRoi {
+                    week_start,
+                    cumulative_roi: total_roi,
+                    position_count: count,
+                }
+            })
+            .collect()
+    }
+
+    pub fn calculate_monthly_roi(positions: &[ClosedPosition]) -> Vec<MonthlyRoi> {
+        let mut monthly_map: BTreeMap<(i32, u32), (f64, usize)> = BTreeMap::new();
+
+        for position in positions {
+            if let Some(roi) = position.roi {
+                let date = position.exit_time.date_naive();
+                let key = (date.year(), date.month());
+
+                let entry = monthly_map.entry(key).or_insert((0.0, 0));
+                entry.0 += roi;
+                entry.1 += 1;
+            }
+        }
+
+        monthly_map
+            .into_iter()
+            .map(|((year, month), (total_roi, count))| MonthlyRoi {
+                month: (year, month),
+                cumulative_roi: total_roi,
+                position_count: count,
+            })
+            .collect()
+    }
     /// Map `(year, week)` → cumulative ROI (as a fraction, e.g., 0.05 = +5 %)
     pub fn cumulative_roi_weekly(
         &mut self,
         positions: &[bot::ClosedPosition],
     ) -> BTreeMap<(i32, u32), f64> {
         let grouped = Self::group_by_week(self, positions);
+        info!("grouped -> {:?}", grouped);
         grouped
             .into_iter()
             .map(|(k, pcts)| {
@@ -346,6 +408,7 @@ impl Graph {
         }
 
         // ----- Aggregated results --------------------------------------------
+        println!("\n------------------------------------------------------------------------");
         println!("\nTotal realised PnL: ${:.2}", total_pnl);
         println!(
             "Total margin used (across all trades): ${:.2}",
@@ -364,17 +427,28 @@ impl Graph {
         );
 
         println!("--- Cumulative ROI % per week ---");
-        for ((y, w), pct) in Self::cumulative_roi_weekly(self, &positions) {
-            println!("{:04}-W{:02}: {:.2} %", y, w, pct);
+        //((y, w), pct)
+        for weekly in Self::calculate_weekly_roi(&positions) {
+            println!(
+                "{:04}-W{:02}: {:.2} %",
+                weekly.week_start, weekly.position_count, weekly.cumulative_roi
+            );
         }
 
         // ------------------------------------------------------------------
         // 2. Cumulative ROI per month (as a percent)
         // ------------------------------------------------------------------
-        println!("\n--- Cumulative ROI % per month ---");
-        for ((y, m), roi) in Self::cumulative_roi_monthly(self, &positions) {
-            println!("{:04}-{:02}: {:.2} %", y, m, roi * 100.0);
+        println!("\n--- Cumulative ROI % per month ---"); //((y, m), roi)
+        for monthly in Self::calculate_monthly_roi(&positions) {
+            println!(
+                "{:04}-{:2}: {:02}: {:.2} %",
+                monthly.month.0,
+                monthly.month.1,
+                monthly.position_count,
+                monthly.cumulative_roi //* 100.0
+            );
         }
+        println!("\n------------------------------------------------------------------------");
 
         // ------------------------------------------------------------------
         // 3. Absolute ROI (realised capital) per week
