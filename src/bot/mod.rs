@@ -582,14 +582,18 @@ impl Bot {
                 //Operation scalp, if set
                 if config.is_scalp {
                     let config_diff = config.scalp_price_difference;
+                    let min_config_diff = config_diff - 100.00;
                     let diff = Helper::calc_price_difference(
                         self.open_pos.entry_price,
                         price,
                         Position::Long,
                     );
-                    info!("diff >= config_diff {:2.2} >= {:2.2}", diff, config_diff);
+                    info!(
+                        "diff >= config_diff {:2.2} >= {:2.2}; min_config_scalp <= {:2.2}",
+                        diff, config_diff, min_config_diff
+                    );
 
-                    if diff >= config_diff {
+                    if diff >= config_diff || diff >= min_config_diff {
                         //Take your profits and get out!
                         Self::take_profit_on_long(self, price, size, config, exchange).await?;
                     }
@@ -627,14 +631,18 @@ impl Bot {
                 //Operation scalp, if set
                 if config.is_scalp {
                     let config_diff = config.scalp_price_difference;
+                    let min_config_diff = config_diff - 100.00;
                     let diff = Helper::calc_price_difference(
                         self.open_pos.entry_price,
                         price,
                         Position::Short,
                     );
-                    info!("diff >= config_diff {:2.2} >= {:2.2}", diff, config_diff);
+                    info!(
+                        "diff >= config_diff {:2.2} >= {:2.2}; min_config_scalp <= {:2.2}",
+                        diff, config_diff, min_config_diff
+                    );
 
-                    if diff >= config_diff {
+                    if diff >= config_diff || diff >= min_config_diff {
                         //Take your profits and get out!
                         Self::take_profit_on_short(self, price, size, config, exchange).await?;
                     }
