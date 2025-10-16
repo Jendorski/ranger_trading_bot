@@ -243,7 +243,8 @@ impl Graph {
 
         let mut roi: f64 = 0.00; // fraction – multiply by 100 for percent
 
-        if pnl != 0.00 && margin != 0.00 {
+        //if pnl != 0.00 && margin != 0.00 {
+        if pnl.is_finite() && margin.is_finite() {
             roi = Helper::calc_roi(
                 &mut Helper::from_config(),
                 margin,
@@ -346,7 +347,8 @@ impl Graph {
             total_margin
         );
 
-        let overall_roi = if total_margin != 0.0 {
+        let overall_roi = if total_margin.is_finite() && total_pnl.is_finite() {
+            //total_margin != 0.0
             total_pnl / total_margin
         } else {
             0.0

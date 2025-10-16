@@ -8,7 +8,6 @@ use crate::cache::RedisClient;
 use crate::config::Config;
 use crate::exchange::{Exchange, OrderSide};
 use crate::graph::Graph;
-use crate::helper::Helper;
 
 mod bot;
 mod cache;
@@ -96,8 +95,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     warn!("It's midnight now!");
     Graph::prepare_cumulative_weekly_monthly(&mut graph, redis_conn.clone()).await?;
 
-    Graph::all_trade_compute(&mut graph, redis_conn.clone()).await?;
-
     loop {
         interval.tick().await;
 
@@ -114,7 +111,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         //     warn!("It's midnight now!");
         //     Graph::prepare_cumulative_weekly_monthly(&mut graph, redis_conn.clone()).await?;
 
-        //     Graph::all_trade_compute(&mut graph, redis_conn.clone()).await?;
         // }
     }
 }

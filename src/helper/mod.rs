@@ -58,7 +58,7 @@ impl Helper {
 
         let mut roi: f64 = 0.00; // fraction – multiply by 100 for percent
 
-        if !pnl.is_finite() && !margin.is_finite() {
+        if pnl.is_finite() && margin.is_finite() {
             roi = (pnl / margin) * 100.0;
         }
 
