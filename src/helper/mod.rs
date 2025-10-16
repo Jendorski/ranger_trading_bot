@@ -25,11 +25,11 @@ impl Helper {
             pnl = 0.00;
         }
 
-        if pos == Position::Long {
+        if pos == Position::Long && exit_price != 0.00 && entry_price != 0.00 {
             pnl = exit_price - entry_price;
         }
 
-        if pos == Position::Short {
+        if pos == Position::Short && exit_price != 0.00 && entry_price != 0.00 {
             pnl = entry_price - exit_price;
         }
 
