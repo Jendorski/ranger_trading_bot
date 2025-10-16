@@ -332,7 +332,7 @@ impl Graph {
             let (pnl, roi) = Self::pnl_and_roi(self, pos);
             println!(
                 "{:36} {:<36} {:<6} {:>10.2} {:>10.2} {:>4.3} {:>4.3} %",
-                pos.exit_time.format("%Y-%m-%d][%H:%M:%S"),
+                pos.exit_time.format("[%Y-%m-%d][%H:%M:%S]"),
                 pos.id,
                 format!("{:?}", pos.position),
                 pos.entry_price,

@@ -6,7 +6,7 @@ use tokio::time;
 
 use crate::cache::RedisClient;
 use crate::config::Config;
-use crate::exchange::{Exchange, OrderSide};
+use crate::exchange::{Exchange, HttpExchange};
 use crate::graph::Graph;
 use crate::helper::Helper;
 
@@ -16,51 +16,6 @@ mod config;
 mod exchange;
 mod graph;
 mod helper;
-
-// use btc_trading_bot::{
-//     bot::Bot,
-//     config::Config,
-//     exchange::{Exchange, OrderSide},
-// };
-
-/// Simple HTTP‑based mock of the `Exchange` trait – replace with your real SDK.
-///
-/// In this example we hit a public ticker endpoint (e.g. Binance).
-struct HttpExchange {
-    client: reqwest::Client,
-    symbol: String,
-}
-
-#[async_trait::async_trait]
-impl Exchange for HttpExchange {
-    async fn get_current_price(&self) -> Result<f64, anyhow::Error> {
-        // Example: Binance spot ticker
-
-        //Bitget Futures Price API: https://api.bitget.com/api/v2/mix/market/symbol-price?productType=usdt-futures&symbol=BTCUSDT
-        let resp = self
-            .client
-            .get(format!(
-                "https://api.binance.com/api/v3/ticker/price?symbol={}",
-                self.symbol
-            ))
-            .send()
-            .await?
-            .json::<serde_json::Value>()
-            .await?;
-        let price: f64 = resp["price"].as_str().unwrap_or("0").parse()?;
-        Ok(price)
-    }
-
-    async fn place_market_order(&self, side: OrderSide, amount: f64) -> Result<f64, anyhow::Error> {
-        // For demo purposes we just log and pretend the order filled at current price.
-        let price = self.get_current_price().await?;
-        info!(
-            "Mock market {:?} for {:.6} {} at {price:.2}",
-            side, amount, self.symbol
-        );
-        Ok(price)
-    }
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
