@@ -2,7 +2,6 @@ use anyhow::Result;
 use anyhow::anyhow;
 use chrono::NaiveDate;
 use chrono::{Datelike, Local, Timelike};
-use log::info;
 use redis::{AsyncCommands, aio::MultiplexedConnection};
 use serde_json;
 use std::collections::BTreeMap;
@@ -97,7 +96,6 @@ impl Graph {
         positions: &[bot::ClosedPosition],
     ) -> BTreeMap<(i32, u32), f64> {
         let grouped = Self::group_by_week(self, positions);
-        info!("grouped -> {:?}", grouped);
         grouped
             .into_iter()
             .map(|(k, pcts)| {
@@ -258,6 +256,7 @@ impl Graph {
                     pos.entry_price,
                     pos.exit_price,
                     pos.leverage.unwrap_or(self.config.leverage),
+                    pos.position.unwrap_or(bot::Position::Flat),
                 );
                 map.entry(key).or_default().push(pnl_percent);
             }
@@ -279,6 +278,7 @@ impl Graph {
                     pos.entry_price,
                     pos.exit_price,
                     pos.leverage.unwrap_or(self.config.leverage),
+                    pos.position.unwrap_or(bot::Position::Flat),
                 );
                 map.entry(key).or_default().push(pnl_percent);
             }
@@ -428,25 +428,16 @@ impl Graph {
 
         println!("--- Cumulative ROI % per week ---");
         //((y, w), pct)
-        for weekly in Self::calculate_weekly_roi(&positions) {
-            println!(
-                "{:04}-W{:02}: {:.2} %",
-                weekly.week_start, weekly.position_count, weekly.cumulative_roi
-            );
+        for ((y, w), pct) in Self::cumulative_roi_weekly(self, &positions) {
+            println!("{:04}-W{:02}: {:.2} %", y, w, pct);
         }
 
         // ------------------------------------------------------------------
         // 2. Cumulative ROI per month (as a percent)
         // ------------------------------------------------------------------
         println!("\n--- Cumulative ROI % per month ---"); //((y, m), roi)
-        for monthly in Self::calculate_monthly_roi(&positions) {
-            println!(
-                "{:04}-{:2}: {:02}: {:.2} %",
-                monthly.month.0,
-                monthly.month.1,
-                monthly.position_count,
-                monthly.cumulative_roi //* 100.0
-            );
+        for ((y, m), roi) in Self::cumulative_roi_monthly(self, &positions) {
+            println!("{:04}-{:02}: {:.2} %", y, m, roi * 100.0);
         }
         println!("\n------------------------------------------------------------------------");
 

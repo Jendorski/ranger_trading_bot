@@ -89,7 +89,7 @@ impl Helper {
     }
 
     /// Percentage PnL of a single trade
-    pub fn pnl_percent(entry: f64, exit: f64, leverage: f64) -> f64 {
+    pub fn pnl_percent(entry: f64, exit: f64, leverage: f64, pos: Position) -> f64 {
         if !entry.is_finite() || !exit.is_finite() {
             return 0.00;
         }
@@ -98,7 +98,19 @@ impl Helper {
             return 0.00;
         }
 
-        let pl = (exit - entry) / entry;
+        let mut pl = (exit - entry) / entry;
+
+        if pos == Position::Long {
+            pl = (exit - entry) / entry;
+        }
+
+        if pos == Position::Short {
+            pl = (entry - exit) / entry;
+        }
+
+        if pos == Position::Flat {
+            pl = 0.00;
+        }
 
         return pl * leverage * 100.00;
     }
