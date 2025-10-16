@@ -2,6 +2,7 @@ use anyhow::Result;
 use anyhow::anyhow;
 use chrono::NaiveDate;
 use chrono::{Datelike, Local, Timelike};
+use log::warn;
 use redis::{AsyncCommands, aio::MultiplexedConnection};
 use serde_json;
 use std::collections::BTreeMap;
@@ -67,29 +68,6 @@ impl Graph {
             .collect()
     }
 
-    pub fn calculate_monthly_roi(positions: &[ClosedPosition]) -> Vec<MonthlyRoi> {
-        let mut monthly_map: BTreeMap<(i32, u32), (f64, usize)> = BTreeMap::new();
-
-        for position in positions {
-            if let Some(roi) = position.roi {
-                let date = position.exit_time.date_naive();
-                let key = (date.year(), date.month());
-
-                let entry = monthly_map.entry(key).or_insert((0.0, 0));
-                entry.0 += roi;
-                entry.1 += 1;
-            }
-        }
-
-        monthly_map
-            .into_iter()
-            .map(|((year, month), (total_roi, count))| MonthlyRoi {
-                month: (year, month),
-                cumulative_roi: total_roi,
-                position_count: count,
-            })
-            .collect()
-    }
     /// Map `(year, week)` → cumulative ROI (as a fraction, e.g., 0.05 = +5 %)
     pub fn cumulative_roi_weekly(
         &mut self,
@@ -99,54 +77,14 @@ impl Graph {
         grouped
             .into_iter()
             .map(|(k, pcts)| {
-                let mut prod = 1.0;
+                let mut prod = 0.0; //1.0;
                 for &pct in &pcts {
-                    prod *= 1.0 + pct / 100.0;
+                    prod += pct; //1.0 + pct / 100.0;
                 }
-                (k, prod - 1.0) // subtract the “starting capital”
+                (k, prod) //- 1.0 subtract the “starting capital”
             })
             .collect()
     }
-
-    /**
-     * growth_factor = Π (1 + pnl_percent/100)
-    ROI = growth_factor – 1
-     */
-    /// Cumulative ROI as a fraction (e.g., 0.05 = 5 %) per week
-    // fn cumulative_roi_weekly(positions: &[bot::ClosedPosition]) -> HashMap<(i32, u32), f64> {
-    //     let mut map: HashMap<(i32, u32), f64> = HashMap::new();
-
-    //     for pos in positions {
-    //         let iso = pos.exit_time.iso_week();
-    //         let key = (iso.year(), iso.week());
-    //         let pct = Self::pnl_percent(pos.entry_price, pos.exit_price);
-    //         let factor = 1.0 + pct / 100.0;
-    //         *map.entry(key).or_insert(1.0) *= factor; // cumulative product
-    //     }
-
-    //     // Convert to ROI fraction (subtract the “1” that represents starting capital)
-    //     for v in map.values_mut() {
-    //         *v -= 1.0;
-    //     }
-    //     map
-    // }
-
-    /// Same idea, but by calendar month
-    // pub fn cumulative_roi_monthly(positions: &[bot::ClosedPosition]) -> HashMap<(i32, u32), f64> {
-    //     let mut map: HashMap<(i32, u32), f64> = HashMap::new();
-
-    //     for pos in positions {
-    //         let key = (pos.exit_time.year(), pos.exit_time.month());
-    //         let pct = Self::pnl_percent(pos.entry_price, pos.exit_price);
-    //         let factor = 1.0 + pct / 100.0;
-    //         *map.entry(key).or_insert(1.0) *= factor;
-    //     }
-
-    //     for v in map.values_mut() {
-    //         *v -= 1.0;
-    //     }
-    //     map
-    // }
 
     /// Same idea, but by calendar month
     pub fn cumulative_roi_monthly(
@@ -157,71 +95,14 @@ impl Graph {
         grouped
             .into_iter()
             .map(|(k, pcts)| {
-                let mut prod = 1.0;
+                let mut prod = 0.0; //1.0;
                 for &pct in &pcts {
-                    prod *= 1.0 + pct / 100.0;
+                    prod += pct; //1.0 + pct / 100.0;
                 }
-                (k, prod - 1.0)
+                (k, prod) //- 1.0
             })
             .collect()
     }
-
-    // const NOTIONAL_PER_TRADE: f64 = 50.0; // e.g., $10 k per BTC
-
-    /// ROI per week as a fraction of *total* capital invested that week.
-    // pub fn roi_weekly_absolute(positions: &[bot::ClosedPosition]) -> HashMap<(i32, u32), f64> {
-    //     let mut profit_map: HashMap<(i32, u32), f64> = HashMap::new();
-    //     let mut cap_map: HashMap<(i32, u32), f64> = HashMap::new();
-
-    //     for pos in positions {
-    //         let iso = pos.exit_time.iso_week();
-    //         let key = (iso.year(), iso.week());
-    //         let profit =
-    //             Self::pnl_absolute(pos.entry_price, pos.exit_price, Self::NOTIONAL_PER_TRADE);
-    //         *profit_map.entry(key).or_insert(0.0) += profit;
-    //         *cap_map.entry(key).or_insert(0.0) += Self::NOTIONAL_PER_TRADE;
-    //     }
-
-    //     // ROI = profit / capital invested
-    //     profit_map
-    //         .into_iter()
-    //         .map(|(k, p)| (k, p / cap_map[&k]))
-    //         .collect()
-    // }
-
-    /// Map `(year, week)` → average % return
-    // pub fn avg_pnl_weekly(positions: &[bot::ClosedPosition]) -> BTreeMap<(i32, u32), f64> {
-    //     let grouped = Self::group_by_week(positions);
-    //     grouped
-    //         .into_iter()
-    //         .map(|(k, v)| (k, v.iter().sum::<f64>() / v.len() as f64))
-    //         .collect()
-    // }
-
-    /// Average PnL % for each week (ISO year‑week)
-    // pub fn avg_pnl_weekly(positions: &[ClosedPosition]) -> HashMap<(i32, u32), f64> {
-    //     Self::group_by_week(positions)
-    //         .into_iter()
-    //         .map(|(k, v)| (k, v.iter().sum::<f64>() / v.len() as f64))
-    //         .collect()
-    // }
-
-    /// Map `(year, month)` → average % return
-    // pub fn avg_pnl_monthly(positions: &[bot::ClosedPosition]) -> BTreeMap<(i32, u32), f64> {
-    //     let grouped = Self::group_by_month(positions);
-    //     grouped
-    //         .into_iter()
-    //         .map(|(k, v)| (k, v.iter().sum::<f64>() / v.len() as f64))
-    //         .collect()
-    // }
-
-    // /// Average PnL % for each month
-    // pub fn avg_pnl_monthly(positions: &[ClosedPosition]) -> HashMap<(i32, u32), f64> {
-    //     Self::group_by_month(positions)
-    //         .into_iter()
-    //         .map(|(k, v)| (k, v.iter().sum::<f64>() / v.len() as f64))
-    //         .collect()
-    // }
 
     pub async fn load_all_closed_positions(
         conn: &mut MultiplexedConnection,
@@ -437,7 +318,7 @@ impl Graph {
         // ------------------------------------------------------------------
         println!("\n--- Cumulative ROI % per month ---"); //((y, m), roi)
         for ((y, m), roi) in Self::cumulative_roi_monthly(self, &positions) {
-            println!("{:04}-{:02}: {:.2} %", y, m, roi * 100.0);
+            println!("{:04}-{:02}: {:.2} %", y, m, roi); //* 100.0
         }
         println!("\n------------------------------------------------------------------------");
 

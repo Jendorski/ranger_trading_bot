@@ -98,7 +98,7 @@ impl Helper {
             return 0.00;
         }
 
-        let mut pl = (exit - entry) / entry;
+        let mut pl = 0.00;
 
         if pos == Position::Long {
             pl = (exit - entry) / entry;
