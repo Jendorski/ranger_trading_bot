@@ -1,5 +1,3 @@
-use log::info;
-
 use crate::{bot::Position, config::Config};
 use chrono::{Local, Timelike};
 
