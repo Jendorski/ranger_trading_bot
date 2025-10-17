@@ -243,9 +243,9 @@ impl Graph {
 
         // ----- Aggregated results --------------------------------------------
         println!("\n------------------------------------------------------------------------");
-        println!("\nTotal realised PnL: ${:.2}", total_pnl);
+        println!("\nCumulative realised PnL: ${:.2}", total_pnl);
         println!(
-            "Total margin used (across all trades): ${:.2}",
+            "Cumulative margin used (across all trades): ${:.2}",
             total_margin
         );
 

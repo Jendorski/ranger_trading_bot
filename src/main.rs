@@ -42,6 +42,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // 3️⃣ Bot state
     let mut bot = bot::Bot::new(redis_conn.clone()).await?;
+    let mut scalper = bot::scalper::ScalperBot::new(redis_conn.clone()).await?;
 
     let mut graph = graph::Graph::new();
 
@@ -55,7 +56,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         match exchange.get_current_price().await {
             Ok(price) => {
+                info!("Price = {:.2}", price,);
                 if let Err(e) = bot.run_cycle(price, exchange.as_ref(), &mut cfg).await {
+                    eprintln!("Error during cycle: {e}");
+                }
+
+                if let Err(e) = scalper
+                    .run_scalper_bot(price, exchange.as_ref(), &mut cfg)
+                    .await
+                {
                     eprintln!("Error during cycle: {e}");
                 }
             }

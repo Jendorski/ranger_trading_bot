@@ -148,4 +148,17 @@ impl Helper {
 
         return 0.00;
     }
+
+    //Function to trigger Stop Loss
+    pub fn ssl_hit(current_price: f64, side: Position, sl: f64) -> bool {
+        if side == Position::Long {
+            return current_price <= sl;
+        }
+
+        if side == Position::Short {
+            return current_price >= sl;
+        }
+
+        false
+    }
 }

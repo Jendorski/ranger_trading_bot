@@ -9,6 +9,8 @@ use crate::exchange::{Exchange, OrderSide};
 use crate::helper::Helper;
 use redis::AsyncCommands;
 
+pub mod scalper;
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Zone {
     pub low: f64,
@@ -42,7 +44,7 @@ impl Default for Zones {
                     high: 102_297.8,
                 },
                 Zone {
-                    low: 105_169.9,
+                    low: 105_969.9,
                     high: 106_097.8,
                 },
                 Zone {
@@ -158,6 +160,10 @@ impl Default for Zones {
                 Zone {
                     low: 108_608.0,
                     high: 108_900.0,
+                },
+                Zone {
+                    low: 105_798.0,
+                    high: 105_880.0,
                 },
                 Zone {
                     low: 101_908.0,
@@ -276,9 +282,7 @@ pub struct Bot {
 
     pub open_pos: OpenPosition,
 
-    // pub sl: f64,
-    /// None if no position; Some(OrderSide::Buy) means long, Sell → short
-    pub pos: Position, //Option<OrderSide>,
+    pub pos: Position,
 
     pub zones: Zones,
 
@@ -380,19 +384,6 @@ impl Bot {
             leverage: Some(leverage),
             risk_pct: Some(risk_pct),
         }
-    }
-
-    //Function to trigger Stop Loss
-    pub fn should_close(current_price: f64, side: Position, sl: f64) -> bool {
-        if side == Position::Long {
-            return current_price <= sl;
-        }
-
-        if side == Position::Short {
-            return current_price >= sl;
-        }
-
-        false
     }
 
     pub async fn close_long_position(&mut self, price: f64, config: &mut Config) {
@@ -506,7 +497,8 @@ impl Bot {
         exchange: &dyn Exchange,
         config: &mut Config,
     ) -> Result<()> {
-        info!("Price = {:.2} | State = {:?}", price, self.pos);
+        // info!("Price = {:.2} | State = {:?}", price, self.pos);
+        info!("Ranger State = {:?}", self.pos);
 
         let size = Helper::contract_amount(price, config.margin, config.leverage);
 
@@ -552,7 +544,7 @@ impl Bot {
 
                     self.current_pos_id = self.open_pos.id;
                 } else {
-                    warn!("Price {:.2} out of any zone -- staying flat", price);
+                    warn!("Price {:.2} out of any Ranger zone -- staying flat", price);
                 }
             }
 
@@ -565,10 +557,9 @@ impl Bot {
                     config.risk_pct,
                     Position::Long,
                 );
-                let should_close =
-                    Self::should_close(price, self.pos, self.open_pos.sl.unwrap_or(in_sl));
+                let ssl_hit = Helper::ssl_hit(price, self.pos, self.open_pos.sl.unwrap_or(in_sl));
 
-                if should_close {
+                if ssl_hit {
                     Self::close_long_position(self, price, config).await;
 
                     warn!(
@@ -577,23 +568,6 @@ impl Bot {
                     );
 
                     self.pos = Position::Flat;
-                }
-
-                //Operation scalp, if set
-                if config.is_scalp {
-                    let config_diff = config.scalp_price_difference;
-                    let min_config_diff = config_diff - 100.00;
-                    let diff = Helper::calc_price_difference(
-                        self.open_pos.entry_price,
-                        price,
-                        Position::Long,
-                    );
-                    info!("diff >= config_diff {:2.2} >= {:2.2}", diff, config_diff);
-
-                    if diff >= config_diff || diff >= min_config_diff {
-                        //Take your profits and get out!
-                        Self::take_profit_on_long(self, price, size, config, exchange).await?;
-                    }
                 }
 
                 // 2️⃣ Take‑profit: exit long when we hit the short zone.
@@ -611,10 +585,9 @@ impl Bot {
                     config.risk_pct,
                     Position::Long,
                 );
-                let should_close =
-                    Self::should_close(price, self.pos, self.open_pos.sl.unwrap_or(in_sl));
+                let ssl_hit = Helper::ssl_hit(price, self.pos, self.open_pos.sl.unwrap_or(in_sl));
 
-                if should_close {
+                if ssl_hit {
                     Self::close_short_position(self, price, config).await;
 
                     warn!(
@@ -623,23 +596,6 @@ impl Bot {
                     );
 
                     self.pos = Position::Flat;
-                }
-
-                //Operation scalp, if set
-                if config.is_scalp {
-                    let config_diff = config.scalp_price_difference;
-                    let min_config_diff = config_diff - 100.00;
-                    let diff = Helper::calc_price_difference(
-                        self.open_pos.entry_price,
-                        price,
-                        Position::Short,
-                    );
-                    info!("diff >= config_diff {:2.2} >= {:2.2}", diff, config_diff);
-
-                    if diff >= config_diff || diff >= min_config_diff {
-                        //Take your profits and get out!
-                        Self::take_profit_on_short(self, price, size, config, exchange).await?;
-                    }
                 }
 
                 // 3️⃣ Cover: exit short when we hit the long zone.
