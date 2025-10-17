@@ -6,7 +6,10 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::exchange::{Exchange, OrderSide};
-use crate::helper::Helper;
+use crate::helper::{
+    Helper, TRADING_BOT_ACTIVE, TRADING_BOT_CLOSE_POSITIONS, TRADING_BOT_POSITION,
+    TRADING_BOT_ZONES,
+};
 use redis::AsyncCommands;
 
 pub mod scalper;
@@ -43,10 +46,10 @@ impl Default for Zones {
                     low: 102_169.9,
                     high: 102_297.8,
                 },
-                Zone {
-                    low: 105_969.9,
-                    high: 106_097.8,
-                },
+                // Zone {
+                //     low: 105_969.9,
+                //     high: 106_097.8,
+                // },
                 Zone {
                     low: 107_169.9,
                     high: 107_208.8,
@@ -161,10 +164,10 @@ impl Default for Zones {
                     low: 108_608.0,
                     high: 108_900.0,
                 },
-                Zone {
-                    low: 105_798.0,
-                    high: 105_880.0,
-                },
+                // Zone {
+                //     low: 105_798.0,
+                //     high: 105_880.0,
+                // },
                 Zone {
                     low: 101_908.0,
                     high: 102_000.0,
@@ -267,7 +270,7 @@ impl OpenPosition {
         mut conn: redis::aio::MultiplexedConnection,
         open_pos: OpenPosition,
     ) -> Result<()> {
-        let key = format!("trading::active");
+        let key = TRADING_BOT_ACTIVE;
 
         let _: () = conn.set(key, open_pos.as_str()).await?;
 
@@ -318,12 +321,12 @@ impl Bot {
     }
 
     async fn load_zones(conn: &mut redis::aio::MultiplexedConnection) -> Result<Zones> {
-        let json: String = conn.get("trading_bot:zones").await?;
+        let json: String = conn.get(TRADING_BOT_ZONES).await?;
         Ok(serde_json::from_str(&json)?)
     }
 
     pub async fn load_position(conn: &mut redis::aio::MultiplexedConnection) -> Result<Position> {
-        let opt: Option<String> = conn.get("trading_bot:position").await?;
+        let opt: Option<String> = conn.get(TRADING_BOT_POSITION).await?;
 
         Ok(match opt.as_deref() {
             Some("Flat") => Position::Flat,
@@ -336,7 +339,7 @@ impl Bot {
     async fn store_position(&mut self, pos: Position, open_pos: OpenPosition) -> Result<()> {
         let _: () = self
             .redis_conn
-            .set("trading_bot:position", pos.as_str())
+            .set(TRADING_BOT_POSITION, pos.as_str())
             .await?;
 
         OpenPosition::store_open_position(self.redis_conn.clone(), open_pos).await?;
@@ -344,12 +347,12 @@ impl Bot {
         Ok(())
     }
 
-    /// Store *one* closed position in the list named `"closed_positions"`.
+    /// Store *one* closed position in the list named `TRADING_BOT_CLOSE_POSITIONS`.
     pub async fn store_closed_position(
         conn: &mut redis::aio::MultiplexedConnection,
         pos: &ClosedPosition,
     ) -> Result<()> {
-        let key = "closed_positions";
+        let key = TRADING_BOT_CLOSE_POSITIONS;
         let json = serde_json::to_string(pos)?;
 
         // LPUSH pushes to the **left** of the list – newest element first
@@ -458,11 +461,11 @@ impl Bot {
         config: &mut Config,
         exchange: &dyn Exchange,
     ) -> Result<()> {
-        info!("Taking profit on LONG at {:.2}", price);
+        info!("Ranger Taking profit on LONG at {:.2}", price);
 
         let exec_price = exchange.place_market_order(OrderSide::Sell, size).await?;
 
-        info!("Closed LONG at {:.2}", exec_price);
+        info!("Ranger Closed LONG at {:.2}", exec_price);
 
         Self::close_long_position(self, price, config).await;
 
@@ -478,11 +481,11 @@ impl Bot {
         config: &mut Config,
         exchange: &dyn Exchange,
     ) -> Result<()> {
-        info!("Covering SHORT at {:.2}", price);
+        info!("Ranger Covering SHORT at {:.2}", price);
 
         let exec_price = exchange.place_market_order(OrderSide::Buy, size).await?;
 
-        info!("Covered SHORT at {:.2}", exec_price);
+        info!("Ranger Covered SHORT at {:.2}", exec_price);
 
         Self::close_short_position(self, price, config).await;
 
@@ -498,17 +501,17 @@ impl Bot {
         config: &mut Config,
     ) -> Result<()> {
         // info!("Price = {:.2} | State = {:?}", price, self.pos);
-        info!("Ranger State = {:?}", self.pos);
+        warn!("Ranger State = {:?}", self.pos);
 
         let size = Helper::contract_amount(price, config.margin, config.leverage);
 
         match self.pos {
             Position::Flat => {
                 if self.zones.long_zones.iter().any(|z| z.contains(price)) {
-                    info!("Entering LONG at {:.2}", price);
+                    info!("Ranger Entering LONG at {:.2}", price);
 
                     let exec_price = exchange.place_market_order(OrderSide::Buy, size).await?;
-                    info!("Long executed at {:.2}", exec_price);
+                    info!("Ranger Long executed at {:.2}", exec_price);
 
                     self.pos = Position::Long;
 
@@ -524,11 +527,11 @@ impl Bot {
 
                     self.current_pos_id = self.open_pos.id
                 } else if self.zones.short_zones.iter().any(|z| z.contains(price)) {
-                    info!("Entering SHORT at {:.2}", price);
+                    info!("Ranger Entering SHORT at {:.2}", price);
 
                     let exec_price = exchange.place_market_order(OrderSide::Sell, size).await?;
 
-                    info!("Short executed at {:.2}", exec_price);
+                    info!("Ranger Short executed at {:.2}", exec_price);
 
                     self.pos = Position::Short;
 
@@ -544,7 +547,7 @@ impl Bot {
 
                     self.current_pos_id = self.open_pos.id;
                 } else {
-                    warn!("Price {:.2} out of any Ranger zone -- staying flat", price);
+                    //warn!("Price {:.2} out of any Ranger zone -- staying flat", price);
                 }
             }
 
@@ -563,7 +566,7 @@ impl Bot {
                     Self::close_long_position(self, price, config).await;
 
                     warn!(
-                        "SL for Long Position entered at {:2}, with SL triggered at {:2}",
+                        "SL for Ranger Long Position entered at {:2}, with SL triggered at {:2}",
                         self.open_pos.entry_price, price
                     );
 
@@ -591,7 +594,7 @@ impl Bot {
                     Self::close_short_position(self, price, config).await;
 
                     warn!(
-                        "SL for Short Position entered at {:2}, with SL triggered at {:2}",
+                        "SL for Ranger Short Position entered at {:2}, with SL triggered at {:2}",
                         self.open_pos.entry_price, price
                     );
 

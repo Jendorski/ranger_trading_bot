@@ -1,7 +1,5 @@
 use anyhow::{Ok, Result};
-use log::info;
 use serde::{Deserialize, Serialize};
-use serde_json::Result as JsonResult;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PriceData {
@@ -25,8 +23,8 @@ pub struct PriceResponse {
 
 #[derive(Debug, Clone)]
 pub struct Prices {
-    pub price: f64,
-    pub index_price: f64,
+    //pub price: f64,
+    //pub index_price: f64,
     pub mark_price: f64,
 }
 
@@ -37,8 +35,8 @@ pub fn parse_price_response(json: &str) -> Result<Vec<Prices>> {
         .data
         .into_iter()
         .map(|item| Prices {
-            price: item.price.parse().unwrap_or(0.0),
-            index_price: item.index_price.parse().unwrap_or(0.0),
+            //price: item.price.parse().unwrap_or(0.0),
+            //index_price: item.index_price.parse().unwrap_or(0.0),
             mark_price: item.mark_price.parse().unwrap_or(0.0),
         })
         .collect();
@@ -74,8 +72,8 @@ mod tests {
         }"#;
 
         let prices = get_prices(json).unwrap();
-        assert_eq!(prices.price, 108895.8);
-        assert_eq!(prices.index_price, 108964.6275376986964441);
+        // assert_eq!(prices.price, 108895.8);
+        // assert_eq!(prices.index_price, 108964.6275376986964441);
         assert_eq!(prices.mark_price, 108896.2);
     }
 
@@ -105,7 +103,7 @@ mod tests {
 
         let all_prices = parse_price_response(json).unwrap();
         assert_eq!(all_prices.len(), 2);
-        assert_eq!(all_prices[0].price, 108895.8);
-        assert_eq!(all_prices[1].price, 2500.5);
+        // assert_eq!(all_prices[0].price, 108895.8);
+        // assert_eq!(all_prices[1].price, 2500.5);
     }
 }

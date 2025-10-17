@@ -8,7 +8,10 @@ use crate::{
     bot::{Bot, ClosedPosition, OpenPosition, Position, Zones},
     config::Config,
     exchange::{Exchange, OrderSide},
-    helper::Helper,
+    helper::{
+        CLOSED_POSITIONS, Helper, SCALPER_CLOSED_POSITIONS, TRADIN_SCALPER_BOT_POSITION,
+        TRADING_SCALPER_BOT_ACTIVE,
+    },
 };
 
 pub struct ScalperBot {
@@ -31,6 +34,7 @@ impl ScalperBot {
         let open_pos = Self::load_scalper_open_position(&mut conn)
             .await
             .unwrap_or_else(|_| Self::default_scalper_open_position());
+        warn!("open_pos -> {:?}", open_pos);
 
         Ok(Self {
             scalp_pos: open_pos.pos,
@@ -43,7 +47,7 @@ impl ScalperBot {
     async fn load_scalper_open_position(
         conn: &mut redis::aio::MultiplexedConnection,
     ) -> Result<OpenPosition> {
-        let key = format!("trading_scalper_bot::active",);
+        let key = TRADING_SCALPER_BOT_ACTIVE;
 
         let open_pos: String = conn.get(key).await?;
 
@@ -68,10 +72,10 @@ impl ScalperBot {
     async fn store_position(&mut self, pos: Position, open_pos: OpenPosition) -> Result<()> {
         let _: () = self
             .redis_conn
-            .set("trading_scalper_bot::position", pos.as_str())
+            .set(TRADIN_SCALPER_BOT_POSITION, pos.as_str())
             .await?;
 
-        let scalper_key = format!("trading_scalper_bot::active");
+        let scalper_key = TRADING_SCALPER_BOT_ACTIVE;
 
         let _: () = self.redis_conn.set(scalper_key, open_pos.as_str()).await?;
 
@@ -85,10 +89,10 @@ impl ScalperBot {
     ) -> Result<()> {
         warn!("We are closing this position");
         //use the same as the ranger and other bots
-        let key = "closed_positions";
+        let key = CLOSED_POSITIONS;
 
         //Now this one is for the scalper_closed_positions so we can track the difference in performance
-        let scalper_key = "scalper_closed_positions";
+        let scalper_key = SCALPER_CLOSED_POSITIONS;
         let json = serde_json::to_string(pos)?;
 
         // LPUSH pushes to the **left** of the list – newest element first
@@ -102,7 +106,7 @@ impl ScalperBot {
 
         //Delete the open_position
         info!("Deleting the active position");
-        let deleted_count: usize = conn.del("trading_scalper_bot::active").await?;
+        let deleted_count: usize = conn.del(TRADING_SCALPER_BOT_ACTIVE).await?;
         warn!("deleted_count -> {:?}", deleted_count);
 
         Ok(())
@@ -244,7 +248,7 @@ impl ScalperBot {
         exchange: &dyn Exchange,
         config: &mut Config,
     ) -> Result<()> {
-        info!("Scalper State = {:?}", self.scalp_pos);
+        warn!("Scalper State = {:?}", self.scalp_pos);
         let default_size = Helper::contract_amount(price, config.margin, config.leverage);
 
         match self.scalp_pos {
