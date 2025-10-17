@@ -254,7 +254,7 @@ impl Graph {
                 // USD PnL of this trade
                 let pnl_usd = pos.pnl; //price_diff * quantity;
                 info!(
-                    "pnl_usd -> {:?}, time -> {:?}",
+                    "pnl_usd -> {:?}, time -> {:36}",
                     pnl_usd,
                     pos.exit_time.format("[%Y-%m-%d][%H:%M:%S]")
                 );
