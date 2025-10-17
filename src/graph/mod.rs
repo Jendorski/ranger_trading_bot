@@ -236,12 +236,10 @@ impl Graph {
 
         // 3️⃣ Compound starting from `initial_capital`
         let mut capital = initial_capital;
+        warn!("capital init -> {:?}", capital);
         let mut results: Vec<(bot::ClosedPosition, f64)> = Vec::with_capacity(positions.len());
 
         for pos in positions.into_iter() {
-            // Quantity you can open with the current capital at the given leverage
-            let quantity = pos.quantity.unwrap_or(0.00); //capital * leverage / pos.entry_price;
-
             let exit_price = pos.exit_price;
             let entry_price = pos.entry_price;
 
@@ -249,16 +247,12 @@ impl Graph {
                 && exit_price != 0.00
                 && entry_price.is_finite()
                 && entry_price != 0.00
+                && pos.pnl.is_finite()
+                && pos.pnl != 0.00
             {
-                // Price change – positive for a winning long, positive for a winning short
-                let price_diff = match pos.side.unwrap_or(Position::Flat) {
-                    Position::Long => pos.exit_price - pos.entry_price,
-                    Position::Short => pos.entry_price - pos.exit_price,
-                    Position::Flat => 0.00,
-                };
-
                 // USD PnL of this trade
                 let pnl_usd = pos.pnl; //price_diff * quantity;
+                warn!("pnl_usd -> {:?}", pnl_usd);
 
                 // Roll the result into capital for the next trade
                 capital += pnl_usd;
