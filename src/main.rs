@@ -49,8 +49,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // 4️⃣ Poll loop
     let mut interval = time::interval(Duration::from_secs(cfg.poll_interval_secs));
 
-    let c = Graph::compound_from_redis(redis_conn.clone(), cfg.margin).await?;
-    warn!("compunder -> {:?}", c);
+    Graph::compound_from_redis(redis_conn.clone(), cfg.margin).await?;
 
     //Graph::prepare_cumulative_weekly_monthly(&mut graph, redis_conn.clone()).await?;
 

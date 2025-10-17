@@ -258,11 +258,11 @@ impl Graph {
                 };
 
                 // USD PnL of this trade
-                let pnl_usd = price_diff * quantity;
-                warn!("pnl_usd -> {:?}", pnl_usd);
+                let pnl_usd = pos.pnl; //price_diff * quantity;
 
                 // Roll the result into capital for the next trade
                 capital += pnl_usd;
+                warn!("capital -> {:?}", capital);
 
                 results.push((pos, capital));
             }
