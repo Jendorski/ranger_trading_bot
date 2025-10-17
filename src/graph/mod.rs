@@ -1,14 +1,17 @@
 use anyhow::Result;
 use anyhow::anyhow;
 use chrono::{Datelike, Local, Timelike};
+use log::warn;
 use redis::{AsyncCommands, aio::MultiplexedConnection};
 use serde_json;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
+use crate::bot::Position;
 use crate::bot::{self};
 use crate::config::Config;
 use crate::helper::Helper;
+use crate::helper::TRADING_BOT_CLOSE_POSITIONS;
 
 pub struct Graph {
     pub config: Config,
@@ -203,6 +206,70 @@ impl Graph {
 
     //     Ok(())
     // }
+
+    /// Compounds all closed positions in Redis using a fixed capital and leverage.
+    ///
+    /// # Arguments
+    ///
+    /// * `conn`          – an async Redis connection.
+    /// * `leverage`      – e.g. 35.0 for 35×.
+    /// * `initial_capital` – the starting USDT that is **re‑invested** after every trade (default = $50).
+    ///
+    /// # Returns
+    ///
+    /// A vector of `(ClosedPosition, capital_after_trade)`.  
+    /// The last element contains the final account value.
+    pub async fn compound_from_redis(
+        mut conn: redis::aio::MultiplexedConnection,
+        initial_capital: f64,
+    ) -> Result<Vec<(bot::ClosedPosition, f64)>> {
+        // 1️⃣ Pull every closed position from Redis
+        let raw_jsons: Vec<String> = conn.lrange(TRADING_BOT_CLOSE_POSITIONS, 0, -1).await?;
+
+        let mut positions: Vec<bot::ClosedPosition> = raw_jsons
+            .into_iter()
+            .map(|j| serde_json::from_str::<bot::ClosedPosition>(&j))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // 2️⃣ Sort chronologically – we use exit_time as the definitive moment of closure
+        positions.sort_by_key(|p| p.exit_time);
+
+        // 3️⃣ Compound starting from `initial_capital`
+        let mut capital = initial_capital;
+        let mut results: Vec<(bot::ClosedPosition, f64)> = Vec::with_capacity(positions.len());
+
+        for pos in positions.into_iter() {
+            // Quantity you can open with the current capital at the given leverage
+            let quantity = pos.quantity.unwrap_or(0.00); //capital * leverage / pos.entry_price;
+
+            let exit_price = pos.exit_price;
+            let entry_price = pos.entry_price;
+
+            if exit_price.is_finite()
+                && exit_price != 0.00
+                && entry_price.is_finite()
+                && entry_price != 0.00
+            {
+                // Price change – positive for a winning long, positive for a winning short
+                let price_diff = match pos.side.unwrap_or(Position::Flat) {
+                    Position::Long => pos.exit_price - pos.entry_price,
+                    Position::Short => pos.entry_price - pos.exit_price,
+                    Position::Flat => 0.00,
+                };
+
+                // USD PnL of this trade
+                let pnl_usd = price_diff * quantity;
+                warn!("pnl_usd -> {:?}", pnl_usd);
+
+                // Roll the result into capital for the next trade
+                capital += pnl_usd;
+
+                results.push((pos, capital));
+            }
+        }
+
+        Ok(results)
+    }
 
     pub async fn prepare_cumulative_weekly_monthly(
         &mut self,
