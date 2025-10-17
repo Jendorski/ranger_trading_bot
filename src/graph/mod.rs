@@ -1,6 +1,7 @@
 use anyhow::Result;
 use anyhow::anyhow;
 use chrono::{Datelike, Local, Timelike};
+use log::info;
 use log::warn;
 use redis::{AsyncCommands, aio::MultiplexedConnection};
 use serde_json;
@@ -63,10 +64,10 @@ impl Graph {
     pub async fn load_all_closed_positions(
         conn: &mut MultiplexedConnection,
     ) -> Result<Vec<bot::ClosedPosition>> {
-        let key = "closed_positions";
+        let key = TRADING_BOT_CLOSE_POSITIONS;
+
         // `LRANGE 0 -1` returns the whole list (newest → oldest)
         let raw_jsons: Vec<String> = conn.lrange(key, 0, -1).await?;
-        // info!("raws: {:.?}", raw_jsons);
 
         // Deserialize each JSON string into a struct
         raw_jsons
@@ -222,7 +223,7 @@ impl Graph {
     pub async fn compound_from_redis(
         mut conn: redis::aio::MultiplexedConnection,
         initial_capital: f64,
-    ) -> Result<Vec<(bot::ClosedPosition, f64)>> {
+    ) -> Result<f64> {
         // 1️⃣ Pull every closed position from Redis
         let raw_jsons: Vec<String> = conn.lrange(TRADING_BOT_CLOSE_POSITIONS, 0, -1).await?;
 
@@ -237,7 +238,7 @@ impl Graph {
         // 3️⃣ Compound starting from `initial_capital`
         let mut capital = initial_capital;
         warn!("capital init -> {:?}", capital);
-        let mut results: Vec<(bot::ClosedPosition, f64)> = Vec::with_capacity(positions.len());
+        //let mut results: Vec<(bot::ClosedPosition, f64)> = Vec::with_capacity(positions.len());
 
         for pos in positions.into_iter() {
             let exit_price = pos.exit_price;
@@ -252,17 +253,21 @@ impl Graph {
             {
                 // USD PnL of this trade
                 let pnl_usd = pos.pnl; //price_diff * quantity;
-                warn!("pnl_usd -> {:?}", pnl_usd);
+                info!(
+                    "pnl_usd -> {:?}, time -> {:?}",
+                    pnl_usd,
+                    pos.exit_time.format("[%Y-%m-%d][%H:%M:%S]")
+                );
 
                 // Roll the result into capital for the next trade
                 capital += pnl_usd;
-                warn!("capital -> {:?}", capital);
+                //warn!("capital -> {:?}", capital);
 
-                results.push((pos, capital));
+                //results.push((pos, capital));
             }
         }
 
-        Ok(results)
+        Ok(capital)
     }
 
     pub async fn prepare_cumulative_weekly_monthly(
