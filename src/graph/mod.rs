@@ -274,9 +274,12 @@ impl Graph {
         &mut self,
         mut conn: redis::aio::MultiplexedConnection,
     ) -> anyhow::Result<()> {
-        let positions = Self::load_all_closed_positions(&mut conn).await?;
+        let mut positions = Self::load_all_closed_positions(&mut conn).await?;
 
         let margin_config = self.config.margin;
+
+        // 2️⃣ Sort chronologically – we use exit_time as the definitive moment of closure
+        positions.sort_by_key(|p| p.exit_time);
 
         // ------------------------------------------------------------------
         // 1. Average % PnL per week
