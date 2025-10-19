@@ -29,6 +29,7 @@ pub struct Config {
     pub is_scalp: bool,
 
     pub scalp_price_difference: f64,
+    pub ranger_price_difference: f64,
 }
 
 fn default_interval() -> u64 {
@@ -73,6 +74,11 @@ impl Config {
             .and_then(|v| v.parse::<f64>().ok())
             .unwrap_or(500.0);
 
+        let ranger_price_difference = env::var("RANGER_PRICE_DIFFERENCE")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(1000.0);
+
         let is_scalp = env::var("IS_SCALP")
             .ok()
             .and_then(|v| v.parse::<bool>().ok())
@@ -89,6 +95,7 @@ impl Config {
             risk_pct,
             is_scalp,
             scalp_price_difference,
+            ranger_price_difference,
         })
     }
 }

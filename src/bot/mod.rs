@@ -585,6 +585,34 @@ impl Bot {
                 if self.zones.short_zones.iter().any(|z| z.contains(price)) {
                     Self::take_profit_on_long(self, price, size, config, exchange).await?;
                 }
+
+                if config.ranger_price_difference.is_finite()
+                    && config.ranger_price_difference > 0.00
+                {
+                    let config_diff = config.ranger_price_difference;
+                    let min_config_diff = config_diff - 100.00;
+                    let diff = Helper::calc_price_difference(
+                        self.open_pos.entry_price,
+                        price,
+                        Position::Long,
+                    );
+                    info!(
+                        "RANGER diff >= config_diff {:2.2} >= {:2.2}",
+                        diff, config_diff
+                    );
+
+                    if diff >= config_diff || diff >= min_config_diff {
+                        //Take your profits and get out!
+                        Self::take_profit_on_long(
+                            self,
+                            price,
+                            self.open_pos.position_size,
+                            config,
+                            exchange,
+                        )
+                        .await?;
+                    }
+                }
             }
 
             Position::Short => {
@@ -612,6 +640,34 @@ impl Bot {
                 // 3️⃣ Cover: exit short when we hit the long zone.
                 if self.zones.long_zones.iter().any(|z| z.contains(price)) {
                     Self::take_profit_on_short(self, price, size, config, exchange).await?;
+                }
+
+                if config.ranger_price_difference.is_finite()
+                    && config.ranger_price_difference > 0.00
+                {
+                    let config_diff = config.ranger_price_difference;
+                    let min_config_diff = config_diff - 100.00;
+                    let diff = Helper::calc_price_difference(
+                        self.open_pos.entry_price,
+                        price,
+                        Position::Short,
+                    );
+                    info!(
+                        "RANGER diff >= config_diff {:2.2} >= {:2.2}",
+                        diff, config_diff
+                    );
+
+                    if diff >= config_diff || diff >= min_config_diff {
+                        //Take your profits and get out!
+                        Self::take_profit_on_short(
+                            self,
+                            price,
+                            self.open_pos.position_size,
+                            config,
+                            exchange,
+                        )
+                        .await?;
+                    }
                 }
             }
         }

@@ -332,7 +332,10 @@ impl ScalperBot {
                     price,
                     Position::Long,
                 );
-                info!("diff >= config_diff {:2.2} >= {:2.2}", diff, config_diff);
+                info!(
+                    "SCALPER diff >= config_diff {:2.2} >= {:2.2}",
+                    diff, config_diff
+                );
 
                 if diff >= config_diff || diff >= min_config_diff {
                     //Take your profits and get out!
@@ -374,7 +377,10 @@ impl ScalperBot {
                     price,
                     Position::Short,
                 );
-                info!("diff >= config_diff {:2.2} >= {:2.2}", diff, config_diff);
+                info!(
+                    "SCALPER diff >= config_diff {:2.2} >= {:2.2}",
+                    diff, config_diff
+                );
                 if diff >= config_diff || diff >= min_config_diff {
                     //Take your profits and get out!
                     Self::take_profit_on_short(self, price, default_size, config, exchange).await?;
