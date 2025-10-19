@@ -87,7 +87,6 @@ impl ScalperBot {
         conn: &mut redis::aio::MultiplexedConnection,
         pos: &ClosedPosition,
     ) -> Result<()> {
-        warn!("We are closing this position");
         //use the same as the ranger and other bots
         let key = CLOSED_POSITIONS;
 
@@ -105,9 +104,7 @@ impl ScalperBot {
         // conn.ltrim(key, 0, 9999).await?;
 
         //Delete the open_position
-        info!("Deleting the active position");
-        let deleted_count: usize = conn.del(TRADING_SCALPER_BOT_ACTIVE).await?;
-        warn!("deleted_count -> {:?}", deleted_count);
+        let _: usize = conn.del(TRADING_SCALPER_BOT_ACTIVE).await?;
 
         Ok(())
     }
