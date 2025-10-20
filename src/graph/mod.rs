@@ -12,6 +12,7 @@ use crate::bot::Position;
 use crate::bot::{self};
 use crate::config::Config;
 use crate::helper::Helper;
+use crate::helper::SCALPER_CLOSED_POSITIONS;
 use crate::helper::TRADING_BOT_CLOSE_POSITIONS;
 
 pub struct Graph {
@@ -64,7 +65,7 @@ impl Graph {
     pub async fn load_all_closed_positions(
         conn: &mut MultiplexedConnection,
     ) -> Result<Vec<bot::ClosedPosition>> {
-        let key = TRADING_BOT_CLOSE_POSITIONS;
+        let key = SCALPER_CLOSED_POSITIONS; //SCALPER_CLOSED_POSITIONS TRADING_BOT_CLOSE_POSITIONS
 
         // `LRANGE 0 -1` returns the whole list (newest → oldest)
         let raw_jsons: Vec<String> = conn.lrange(key, 0, -1).await?;

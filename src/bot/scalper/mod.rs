@@ -34,7 +34,7 @@ impl ScalperBot {
         let open_pos = Self::load_scalper_open_position(&mut conn)
             .await
             .unwrap_or_else(|_| Self::default_scalper_open_position());
-        warn!("open_pos -> {:?}", open_pos);
+        // warn!("open_pos -> {:?}", open_pos);
 
         Ok(Self {
             scalp_pos: open_pos.pos,
