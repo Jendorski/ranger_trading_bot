@@ -26,7 +26,7 @@ pub struct Config {
 
     pub risk_pct: f64,
 
-    pub is_scalp: bool,
+    pub ranger_risk_pct: f64,
 
     pub scalp_price_difference: f64,
     pub ranger_price_difference: f64,
@@ -79,10 +79,10 @@ impl Config {
             .and_then(|v| v.parse::<f64>().ok())
             .unwrap_or(1000.0);
 
-        let is_scalp = env::var("IS_SCALP")
+        let ranger_risk_pct = env::var("RANGER_RISK_PERCENTAGE")
             .ok()
-            .and_then(|v| v.parse::<bool>().ok())
-            .unwrap_or(false);
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.10);
 
         Ok(Config {
             api_key,
@@ -93,7 +93,7 @@ impl Config {
             margin,
             leverage,
             risk_pct,
-            is_scalp,
+            ranger_risk_pct,
             scalp_price_difference,
             ranger_price_difference,
         })

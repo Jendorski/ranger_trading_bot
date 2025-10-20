@@ -8,7 +8,6 @@ use serde_json;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
-use crate::bot::Position;
 use crate::bot::{self};
 use crate::config::Config;
 use crate::helper::Helper;

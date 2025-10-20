@@ -526,7 +526,7 @@ impl Bot {
                         size,
                         config.margin,
                         config.leverage,
-                        config.risk_pct,
+                        config.ranger_risk_pct,
                     );
 
                     self.current_pos_id = self.open_pos.id
@@ -546,7 +546,7 @@ impl Bot {
                         size,
                         config.margin,
                         config.leverage,
-                        config.risk_pct,
+                        config.ranger_risk_pct,
                     );
 
                     self.current_pos_id = self.open_pos.id;
