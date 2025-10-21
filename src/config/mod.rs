@@ -67,7 +67,7 @@ impl Config {
         let risk_pct = env::var("RISK_PERCENTAGE")
             .ok()
             .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(0.10); //10%
+            .unwrap_or(0.05); //5%
 
         let scalp_price_difference = env::var("SCALP_PRICE_DIFFERENCE")
             .ok()
