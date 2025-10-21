@@ -67,7 +67,7 @@ impl Config {
         let risk_pct = env::var("RISK_PERCENTAGE")
             .ok()
             .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(0.05);
+            .unwrap_or(0.10); //10%
 
         let scalp_price_difference = env::var("SCALP_PRICE_DIFFERENCE")
             .ok()
@@ -77,12 +77,12 @@ impl Config {
         let ranger_price_difference = env::var("RANGER_PRICE_DIFFERENCE")
             .ok()
             .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(1000.0);
+            .unwrap_or(700.0);
 
         let ranger_risk_pct = env::var("RANGER_RISK_PERCENTAGE")
             .ok()
             .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(0.10);
+            .unwrap_or(0.15); //15%
 
         Ok(Config {
             api_key,
