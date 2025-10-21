@@ -33,7 +33,7 @@ pub struct Config {
 }
 
 fn default_interval() -> u64 {
-    15
+    5
 }
 
 impl Config {
@@ -50,7 +50,7 @@ impl Config {
         let poll_interval_secs: u64 = env::var("POLL_INTERVAL_SECS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(15);
+            .unwrap_or(5);
 
         let redis_url = env::var("REDIS_URL").map_err(|_| anyhow!("Missing REDIS_URL"))?;
 
