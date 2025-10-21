@@ -77,7 +77,7 @@ impl Config {
         let ranger_price_difference = env::var("RANGER_PRICE_DIFFERENCE")
             .ok()
             .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(700.0);
+            .unwrap_or(1000.0);
 
         let ranger_risk_pct = env::var("RANGER_RISK_PERCENTAGE")
             .ok()
