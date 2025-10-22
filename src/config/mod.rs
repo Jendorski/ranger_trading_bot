@@ -72,7 +72,7 @@ impl Config {
         let scalp_price_difference = env::var("SCALP_PRICE_DIFFERENCE")
             .ok()
             .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(500.0);
+            .unwrap_or(400.0);
 
         let ranger_price_difference = env::var("RANGER_PRICE_DIFFERENCE")
             .ok()
