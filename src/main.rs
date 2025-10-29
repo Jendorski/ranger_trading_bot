@@ -63,13 +63,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 if let Err(e) = bot.run_cycle(price, exchange.as_ref(), &mut cfg).await {
                     eprintln!("Error during cycle: {e}");
                 }
-
-                if let Err(e) = scalper
-                    .run_scalper_bot(price, exchange.as_ref(), &mut cfg)
-                    .await
-                {
-                    eprintln!("Error during cycle: {e}");
-                }
             }
             Err(err) => eprintln!("Failed to fetch price: {err}"),
         }
