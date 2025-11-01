@@ -439,6 +439,8 @@ impl<'a> Bot<'a> {
         current_margin += pnl;
         info!("current_margin, {:2}", current_margin);
 
+        self.current_margin = current_margin;
+
         let _ = Self::store_current_margin(current_margin, &mut self.redis_conn).await;
 
         return current_margin;
