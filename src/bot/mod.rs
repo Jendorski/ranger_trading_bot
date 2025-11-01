@@ -1,6 +1,7 @@
-use anyhow::{Ok, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use log::{info, warn};
+use redis::{AsyncCommands, RedisError};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -8,9 +9,8 @@ use crate::config::Config;
 use crate::exchange::{Exchange, OrderSide};
 use crate::helper::{
     Helper, TRADING_BOT_ACTIVE, TRADING_BOT_CLOSE_POSITIONS, TRADING_BOT_POSITION,
-    TRADING_BOT_ZONES,
+    TRADING_BOT_ZONES, TRADING_CAPITAL,
 };
-use redis::AsyncCommands;
 
 pub mod scalper;
 
@@ -260,7 +260,7 @@ impl OpenPosition {
 
 /// Trading state – we keep track of whether we have an open position
 #[derive(Debug)]
-pub struct Bot {
+pub struct Bot<'a> {
     pub current_pos_id: Uuid,
 
     pub open_pos: OpenPosition,
@@ -271,10 +271,17 @@ pub struct Bot {
 
     // a *mutable* reference to the redis connection
     redis_conn: redis::aio::MultiplexedConnection,
+
+    config: &'a Config,
+
+    current_margin: f64,
 }
 
-impl Bot {
-    pub async fn new(mut conn: redis::aio::MultiplexedConnection) -> Result<Self> {
+impl<'a> Bot<'a> {
+    pub async fn new(
+        mut conn: redis::aio::MultiplexedConnection,
+        config: &'a Config,
+    ) -> Result<Self> {
         let pos: Position = Self::load_position(&mut conn)
             .await
             .unwrap_or_else(|_| Position::Flat);
@@ -291,12 +298,16 @@ impl Bot {
             .await
             .unwrap_or_else(|_| OpenPosition::default_open_position());
 
+        let current_margin = Self::load_current_margin(&mut conn, config).await;
+
         Ok(Self {
             pos,
             zones,
             redis_conn: conn,
             current_pos_id,
             open_pos,
+            config,
+            current_margin,
         })
     }
 
@@ -349,12 +360,12 @@ impl Bot {
         pos: Position,
         entry_price: f64,
         position_size: f64,
-        margin: f64,
         leverage: f64,
         risk_pct: f64,
     ) -> OpenPosition {
-        let sl = Helper::stop_loss_price(entry_price, margin, leverage, risk_pct, pos);
-        let qty = Helper::contract_amount(entry_price, margin, leverage);
+        let current_margin = self.current_margin;
+        let sl = Helper::stop_loss_price(entry_price, current_margin, leverage, risk_pct, pos);
+        let qty = Helper::contract_amount(entry_price, current_margin, leverage);
         OpenPosition {
             id: Uuid::new_v4(),
             pos: pos,
@@ -362,19 +373,25 @@ impl Bot {
             position_size, //does the same thing as quantity :(
             entry_time: Utc::now(),
             sl: Some(sl),
-            margin: Some(margin),
+            margin: Some(current_margin),
             quantity: Some(qty),
             leverage: Some(leverage),
             risk_pct: Some(risk_pct),
         }
     }
 
-    pub async fn close_long_position(&mut self, price: f64, config: &mut Config) {
+    pub async fn close_long_position(&mut self, price: f64) {
         let roi = Helper::calc_roi(
             &mut Helper::from_config(),
-            self.open_pos.margin.unwrap_or(config.margin),
+            self.open_pos.margin.unwrap_or(self.config.margin),
             self.open_pos.entry_price,
             self.pos,
+            self.open_pos.position_size,
+            price,
+        );
+        let pnl = Helper::compute_pnl(
+            self.pos,
+            self.open_pos.entry_price,
             self.open_pos.position_size,
             price,
         );
@@ -386,12 +403,7 @@ impl Bot {
             position: Some(Position::Long),
             side: None,
             entry_time: self.open_pos.entry_time,
-            pnl: Helper::compute_pnl(
-                self.pos,
-                self.open_pos.entry_price,
-                self.open_pos.position_size,
-                price,
-            ),
+            pnl,
             quantity: Some(self.open_pos.position_size),
             sl: self.open_pos.sl,
             roi: Some(roi),
@@ -399,9 +411,51 @@ impl Bot {
             margin: self.open_pos.margin,
         };
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
+
+        //update the margin based on the pnl
+        let _ = Self::prepare_current_margin(self, pnl);
     }
 
-    pub async fn close_short_position(&mut self, price: f64, config: &mut Config) {
+    pub async fn load_current_margin(
+        redis_conn: &mut redis::aio::MultiplexedConnection,
+        config: &'a Config,
+    ) -> f64 {
+        let key = TRADING_CAPITAL;
+
+        let json: Result<Option<String>, RedisError> = redis_conn.get(key).await;
+
+        let margin = match json {
+            Ok(Some(json)) => serde_json::from_str::<f64>(&json).unwrap_or_else(|_| config.margin),
+            Ok(None) => config.margin,
+            Err(_) => config.margin,
+        };
+
+        return margin;
+    }
+
+    pub async fn prepare_current_margin(&mut self, pnl: f64) -> f64 {
+        let mut current_margin = Self::load_current_margin(&mut self.redis_conn, self.config).await;
+
+        current_margin += pnl;
+        info!("current_margin, {:2}", current_margin);
+
+        let _ = Self::store_current_margin(current_margin, &mut self.redis_conn).await;
+
+        return current_margin;
+    }
+
+    async fn store_current_margin(
+        current_margin: f64,
+        conn: &mut redis::aio::MultiplexedConnection,
+    ) -> Result<()> {
+        let json = serde_json::to_string(&current_margin).expect("Failed to serialize margin");
+
+        let _: () = conn.set(TRADING_CAPITAL, json).await?;
+
+        Ok(())
+    }
+
+    pub async fn close_short_position(&mut self, price: f64) {
         let pnl = Helper::compute_pnl(
             self.open_pos.pos,
             self.open_pos.entry_price,
@@ -410,7 +464,7 @@ impl Bot {
         );
         let roi = Helper::calc_roi(
             &mut Helper::from_config(),
-            self.open_pos.margin.unwrap_or(config.margin),
+            self.open_pos.margin.unwrap_or(self.config.margin),
             self.open_pos.entry_price,
             self.open_pos.pos,
             self.open_pos.position_size,
@@ -432,13 +486,15 @@ impl Bot {
             margin: self.open_pos.margin,
         };
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
+
+        //update the margin based on the pnl
+        let _ = Self::prepare_current_margin(self, pnl);
     }
 
     pub async fn take_profit_on_long(
         &mut self,
         price: f64,
         size: f64,
-        config: &mut Config,
         exchange: &dyn Exchange,
     ) -> Result<()> {
         info!("Ranger Taking profit on LONG at {:.2}", price);
@@ -447,7 +503,7 @@ impl Bot {
 
         info!("Ranger Closed LONG at {:.2}", exec_price);
 
-        Self::close_long_position(self, price, config).await;
+        Self::close_long_position(self, price).await;
 
         self.pos = Position::Flat;
 
@@ -458,7 +514,7 @@ impl Bot {
         &mut self,
         price: f64,
         size: f64,
-        config: &mut Config,
+        // config: &mut Config,
         exchange: &dyn Exchange,
     ) -> Result<()> {
         info!("Ranger Covering SHORT at {:.2}", price);
@@ -467,7 +523,7 @@ impl Bot {
 
         info!("Ranger Covered SHORT at {:.2}", exec_price);
 
-        Self::close_short_position(self, price, config).await;
+        Self::close_short_position(self, price).await;
 
         self.pos = Position::Flat;
 
@@ -478,12 +534,12 @@ impl Bot {
         &mut self,
         price: f64,
         exchange: &dyn Exchange,
-        config: &mut Config,
+        //config: &mut Config,
     ) -> Result<()> {
         // info!("Price = {:.2} | State = {:?}", price, self.pos);
         warn!("Ranger State = {:?}", self.pos);
 
-        let size = Helper::contract_amount(price, config.margin, config.leverage);
+        let size = Helper::contract_amount(price, self.config.margin, self.config.leverage);
 
         match self.pos {
             Position::Flat => {
@@ -500,9 +556,8 @@ impl Bot {
                         self.pos,
                         price,
                         size,
-                        config.margin,
-                        config.leverage,
-                        config.ranger_risk_pct,
+                        self.config.leverage,
+                        self.config.ranger_risk_pct,
                     );
 
                     self.current_pos_id = self.open_pos.id
@@ -520,9 +575,8 @@ impl Bot {
                         Position::Short,
                         price,
                         size,
-                        config.margin,
-                        config.leverage,
-                        config.ranger_risk_pct,
+                        self.config.leverage,
+                        self.config.ranger_risk_pct,
                     );
 
                     self.current_pos_id = self.open_pos.id;
@@ -535,15 +589,15 @@ impl Bot {
                 //Trigger SL if it's met
                 let in_sl = Helper::stop_loss_price(
                     self.open_pos.entry_price,
-                    config.margin,
-                    config.leverage,
-                    config.risk_pct,
+                    self.config.margin,
+                    self.config.leverage,
+                    self.config.risk_pct,
                     Position::Long,
                 );
                 let ssl_hit = Helper::ssl_hit(price, self.pos, self.open_pos.sl.unwrap_or(in_sl));
 
                 if ssl_hit {
-                    Self::close_long_position(self, price, config).await;
+                    Self::close_long_position(self, price).await;
 
                     warn!(
                         "SL for Ranger Long Position entered at {:2}, with SL triggered at {:2}",
@@ -555,7 +609,7 @@ impl Bot {
 
                 // 2️⃣ Take‑profit: exit long when we hit the short zone.
                 if self.zones.short_zones.iter().any(|z| z.contains(price)) {
-                    Self::take_profit_on_long(self, price, size, config, exchange).await?;
+                    Self::take_profit_on_long(self, price, size, exchange).await?;
                 }
             }
 
@@ -563,15 +617,15 @@ impl Bot {
                 //Trigger SL if it's met
                 let in_sl = Helper::stop_loss_price(
                     self.open_pos.entry_price,
-                    config.margin,
-                    config.leverage,
-                    config.risk_pct,
+                    self.config.margin,
+                    self.config.leverage,
+                    self.config.risk_pct,
                     Position::Long,
                 );
                 let ssl_hit = Helper::ssl_hit(price, self.pos, self.open_pos.sl.unwrap_or(in_sl));
 
                 if ssl_hit {
-                    Self::close_short_position(self, price, config).await;
+                    Self::close_short_position(self, price).await;
 
                     warn!(
                         "SL for Ranger Short Position entered at {:2}, with SL triggered at {:2}",
@@ -583,7 +637,7 @@ impl Bot {
 
                 // 3️⃣ Cover: exit short when we hit the long zone.
                 if self.zones.long_zones.iter().any(|z| z.contains(price)) {
-                    Self::take_profit_on_short(self, price, size, config, exchange).await?;
+                    Self::take_profit_on_short(self, price, size, exchange).await?;
                 }
             }
         }

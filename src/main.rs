@@ -28,7 +28,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .unwrap();
 
     // 1️⃣ Load config
-    let mut cfg = Config::from_env()?;
+    let cfg = Config::from_env()?;
     info!("Loaded config: {:?}", cfg);
 
     let mut binding = RedisClient::connect(&cfg.redis_url).await?;
@@ -41,16 +41,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     });
 
     // 3️⃣ Bot state
-    let mut bot = bot::Bot::new(redis_conn.clone()).await?;
-    let mut scalper = bot::scalper::ScalperBot::new(redis_conn.clone()).await?;
+    let mut bot = bot::Bot::new(redis_conn.clone(), &cfg).await?;
+    // let mut scalper = bot::scalper::ScalperBot::new(redis_conn.clone()).await?;
 
     let mut graph = graph::Graph::new();
 
     // 4️⃣ Poll loop
     let mut interval = time::interval(Duration::from_secs(cfg.poll_interval_secs));
 
-    // let compounded_capital = Graph::compound_from_redis(redis_conn.clone(), cfg.margin).await?;
-    // info!("compounded_capital -> {:?}", compounded_capital);
+    let compounded_capital = Graph::compound_from_redis(redis_conn.clone(), cfg.margin).await?;
+    info!("compounded_capital -> {:?}", compounded_capital);
 
     Graph::prepare_cumulative_weekly_monthly(&mut graph, redis_conn.clone()).await?;
 
@@ -60,7 +60,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         match exchange.get_current_price().await {
             Ok(price) => {
                 info!("Price = {:.2}", price,);
-                if let Err(e) = bot.run_cycle(price, exchange.as_ref(), &mut cfg).await {
+                if let Err(e) = bot.run_cycle(price, exchange.as_ref()).await {
                     eprintln!("Error during cycle: {e}");
                 }
             }

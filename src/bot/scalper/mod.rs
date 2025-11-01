@@ -9,7 +9,7 @@ use crate::{
     config::Config,
     exchange::{Exchange, OrderSide},
     helper::{
-        CLOSED_POSITIONS, Helper, SCALPER_CLOSED_POSITIONS, TRADIN_SCALPER_BOT_POSITION,
+        Helper, SCALPER_CLOSED_POSITIONS, TRADIN_SCALPER_BOT_POSITION, TRADING_BOT_CLOSE_POSITIONS,
         TRADING_SCALPER_BOT_ACTIVE,
     },
 };
@@ -88,7 +88,7 @@ impl ScalperBot {
         pos: &ClosedPosition,
     ) -> Result<()> {
         //use the same as the ranger and other bots
-        let key = CLOSED_POSITIONS;
+        let key = TRADING_BOT_CLOSE_POSITIONS;
 
         //Now this one is for the scalper_closed_positions so we can track the difference in performance
         let scalper_key = SCALPER_CLOSED_POSITIONS;

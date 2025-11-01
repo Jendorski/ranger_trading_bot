@@ -3,12 +3,12 @@ use chrono::{Local, Timelike};
 
 pub const TRADING_SCALPER_BOT_ACTIVE: &str = "trading_scalper_bot::active";
 pub const TRADIN_SCALPER_BOT_POSITION: &str = "trading_scalper_bot::position";
-pub const CLOSED_POSITIONS: &str = "closed_positions";
 pub const SCALPER_CLOSED_POSITIONS: &str = "scalper_closed_positions";
 pub const TRADING_BOT_ZONES: &str = "trading_bot:zones";
 pub const TRADING_BOT_POSITION: &str = "trading_bot:position";
 pub const TRADING_BOT_ACTIVE: &str = "trading::active";
 pub const TRADING_BOT_CLOSE_POSITIONS: &str = "closed_positions";
+pub const TRADING_CAPITAL: &str = "trading_capital";
 
 pub struct Helper {
     pub config: Config,
