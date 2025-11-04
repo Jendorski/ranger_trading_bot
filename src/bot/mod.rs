@@ -278,7 +278,7 @@ pub struct Bot<'a> {
 
     current_margin: f64,
 
-    partial_profit_target: Result<Vec<PartialProfitTarget>>,
+    partial_profit_target: Vec<PartialProfitTarget>,
 }
 
 impl<'a> Bot<'a> {
@@ -304,7 +304,10 @@ impl<'a> Bot<'a> {
 
         let current_margin = Self::load_current_margin(&mut conn, config).await;
 
-        let partial_profit_target = Self::load_partial_profit_target(&mut conn).await;
+        let partial_profit_target = Self::load_partial_profit_target(&mut conn)
+            .await
+            .unwrap_or_else(|_| [].to_vec());
+
         info!("partial_profit_target: {:?}", partial_profit_target);
 
         Ok(Self {
@@ -697,7 +700,7 @@ impl<'a> Bot<'a> {
         pos: Position,
     ) -> Result<()> {
         let ppt = Helper::compute_partial_profit_target(entry_price, pos);
-        self.partial_profit_target = Ok(ppt.clone());
+        self.partial_profit_target = ppt.clone();
 
         let _: () = self
             .redis_conn
@@ -794,18 +797,14 @@ impl<'a> Bot<'a> {
                     self.pos = Position::Flat;
                 }
 
-                let ppt = self
+                if self
                     .partial_profit_target
-                    .as_mut()
-                    .map_err(|_| {
-                        anyhow!("Unable to fetch partial profit targets for this LONG position")
-                    })
-                    .unwrap();
-
-                if ppt.iter().any(|z| z.contains(price, self.pos)) {
+                    .iter()
+                    .any(|z| z.contains(price, self.pos))
+                {
                     info!(
                         "LONG: Taking Partial Profits here.... {:?}, Take profit targets: {:?}",
-                        price, ppt
+                        price, self.partial_profit_target
                     );
                     Self::take_partial_profit_on_long(self, price).await?;
                 }
@@ -838,21 +837,17 @@ impl<'a> Bot<'a> {
                     self.pos = Position::Flat;
                 }
 
-                // let ppt = self
-                //     .partial_profit_target
-                //     .as_mut()
-                //     .map_err(|_| {
-                //         anyhow!("Unable to fetch partial profit targets for this SHORT position")
-                //     })
-                //     .unwrap();
-
-                // if ppt.iter().any(|z| z.contains(price, self.pos)) {
-                //     info!(
-                //         "SHORT: Taking Partial Profits here.... {:?}, Take profit targets: {:?}",
-                //         price, ppt
-                //     );
-                //     Self::take_partial_profit_on_short(self, price).await?;
-                // }
+                if self
+                    .partial_profit_target
+                    .iter()
+                    .any(|z| z.contains(price, self.pos))
+                {
+                    info!(
+                        "SHORT: Taking Partial Profits here.... {:?}, Take profit targets: {:?}",
+                        price, self.partial_profit_target
+                    );
+                    Self::take_partial_profit_on_short(self, price).await?;
+                }
 
                 // 3️⃣ Cover: exit short when we hit the long zone.
                 if self.zones.long_zones.iter().any(|z| z.contains(price)) {
