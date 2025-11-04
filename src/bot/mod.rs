@@ -1,4 +1,5 @@
 use anyhow::Result;
+use anyhow::anyhow;
 use chrono::{DateTime, Utc};
 use log::{info, warn};
 use redis::{AsyncCommands, RedisError};
@@ -8,9 +9,10 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::exchange::{Exchange, OrderSide};
 use crate::helper::{
-    Helper, TRADING_BOT_ACTIVE, TRADING_BOT_CLOSE_POSITIONS, TRADING_BOT_POSITION,
-    TRADING_BOT_ZONES, TRADING_CAPITAL,
+    Helper, PartialProfitTarget, TRADING_BOT_ACTIVE, TRADING_BOT_CLOSE_POSITIONS,
+    TRADING_BOT_POSITION, TRADING_BOT_ZONES, TRADING_CAPITAL,
 };
+use crate::helper::{TRADING_PARTIAL_PROFIT_TARGET, TradeAction};
 
 pub mod scalper;
 
@@ -275,6 +277,8 @@ pub struct Bot<'a> {
     config: &'a Config,
 
     current_margin: f64,
+
+    partial_profit_target: Result<Vec<PartialProfitTarget>>,
 }
 
 impl<'a> Bot<'a> {
@@ -300,6 +304,8 @@ impl<'a> Bot<'a> {
 
         let current_margin = Self::load_current_margin(&mut conn, config).await;
 
+        let partial_profit_target = Self::load_partial_profit_target(&mut conn).await;
+
         Ok(Self {
             pos,
             zones,
@@ -308,7 +314,20 @@ impl<'a> Bot<'a> {
             open_pos,
             config,
             current_margin,
+            partial_profit_target,
         })
+    }
+
+    async fn load_partial_profit_target(
+        conn: &mut redis::aio::MultiplexedConnection,
+    ) -> Result<Vec<PartialProfitTarget>> {
+        // `LRANGE 0 -1` returns the whole list (newest → oldest)
+        let raw_jsons: String = conn.get(TRADING_PARTIAL_PROFIT_TARGET).await?;
+
+        let vecs = serde_json::from_str::<Vec<PartialProfitTarget>>(&raw_jsons)
+            .map_err(|e| anyhow!("Failed to parse: {}", e))?;
+
+        Ok(vecs)
     }
 
     async fn load_zones(conn: &mut redis::aio::MultiplexedConnection) -> Result<Zones> {
@@ -378,6 +397,12 @@ impl<'a> Bot<'a> {
             leverage: Some(leverage),
             risk_pct: Some(risk_pct),
         }
+    }
+
+    async fn delete_partial_profit_target(&mut self) -> Result<()> {
+        let _: () = self.redis_conn.del(TRADING_PARTIAL_PROFIT_TARGET).await?;
+
+        Ok(())
     }
 
     pub async fn close_long_position(&mut self, price: f64) {
@@ -512,6 +537,140 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
+    async fn take_partial_profit_on_long(&mut self, price: f64) -> Result<()> {
+        let mut remaining_size = self.open_pos.quantity.unwrap_or_default();
+        let fraction = 0.25;
+        let qty_to_close = fraction * remaining_size;
+
+        if qty_to_close <= 0.0000 {
+            Self::close_long_position(self, price).await;
+        }
+
+        remaining_size -= qty_to_close;
+
+        if remaining_size <= 0.0000 {
+            self.open_pos.quantity = Some(remaining_size);
+            Self::close_long_position(self, price).await;
+        }
+
+        let profit_factor = self.config.profit_factor;
+
+        let new_sl = profit_factor + self.open_pos.sl.unwrap_or_default();
+
+        let roi = Helper::calc_roi(
+            &mut Helper::from_config(),
+            self.open_pos.margin.unwrap_or(self.config.margin),
+            self.open_pos.entry_price,
+            self.pos,
+            qty_to_close,
+            price,
+        );
+        let pnl = Helper::compute_pnl(self.pos, self.open_pos.entry_price, qty_to_close, price);
+        let closed_pos = ClosedPosition {
+            id: self.open_pos.id,
+            entry_price: self.open_pos.entry_price,
+            exit_price: price,
+            exit_time: Utc::now(),
+            position: Some(Position::Long),
+            side: None,
+            entry_time: self.open_pos.entry_time,
+            pnl,
+            quantity: Some(qty_to_close),
+            sl: self.open_pos.sl,
+            roi: Some(roi),
+            leverage: self.open_pos.leverage,
+            margin: self.open_pos.margin,
+        };
+        let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
+
+        //update the margin based on the pnl
+        let _ = Self::prepare_current_margin(self, pnl).await;
+
+        self.open_pos = OpenPosition {
+            id: self.open_pos.id,
+            pos: self.open_pos.pos,
+            entry_price: self.open_pos.entry_price,
+            position_size: remaining_size,
+            entry_time: self.open_pos.entry_time,
+            sl: Some(new_sl),
+            margin: self.open_pos.margin,
+            quantity: Some(remaining_size),
+            leverage: self.open_pos.leverage,
+            risk_pct: self.open_pos.risk_pct,
+        };
+
+        warn!("NEW SL for LONG is: {:?}", new_sl);
+
+        Ok(())
+    }
+
+    async fn take_partial_profit_on_short(&mut self, price: f64) -> Result<()> {
+        let mut remaining_size = self.open_pos.quantity.unwrap_or_default();
+        let fraction = 0.25;
+        let qty_to_close = fraction * remaining_size;
+
+        if qty_to_close <= 0.0000 {
+            Self::close_short_position(self, price).await;
+        }
+
+        remaining_size -= qty_to_close;
+
+        if remaining_size <= 0.0000 {
+            self.open_pos.quantity = Some(remaining_size);
+            Self::close_short_position(self, price).await;
+        }
+
+        let profit_factor = self.config.profit_factor;
+
+        let new_sl = profit_factor + self.open_pos.sl.unwrap_or_default();
+
+        let roi = Helper::calc_roi(
+            &mut Helper::from_config(),
+            self.open_pos.margin.unwrap_or(self.config.margin),
+            self.open_pos.entry_price,
+            self.pos,
+            qty_to_close,
+            price,
+        );
+        let pnl = Helper::compute_pnl(self.pos, self.open_pos.entry_price, qty_to_close, price);
+        let closed_pos = ClosedPosition {
+            id: self.open_pos.id,
+            entry_price: self.open_pos.entry_price,
+            exit_price: price,
+            exit_time: Utc::now(),
+            position: Some(Position::Short),
+            side: None,
+            entry_time: self.open_pos.entry_time,
+            pnl,
+            quantity: Some(qty_to_close),
+            sl: self.open_pos.sl,
+            roi: Some(roi),
+            leverage: self.open_pos.leverage,
+            margin: self.open_pos.margin,
+        };
+        let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
+
+        //update the margin based on the pnl
+        let _ = Self::prepare_current_margin(self, pnl).await;
+
+        self.open_pos = OpenPosition {
+            id: self.open_pos.id,
+            pos: self.open_pos.pos,
+            entry_price: self.open_pos.entry_price,
+            position_size: remaining_size,
+            entry_time: self.open_pos.entry_time,
+            sl: Some(new_sl),
+            margin: self.open_pos.margin,
+            quantity: Some(remaining_size),
+            leverage: self.open_pos.leverage,
+            risk_pct: self.open_pos.risk_pct,
+        };
+
+        warn!("NEW SL for SHORT is: {:?}", new_sl);
+
+        Ok(())
+    }
+
     pub async fn take_profit_on_short(
         &mut self,
         price: f64,
@@ -532,6 +691,25 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
+    async fn store_partial_profit_targets(
+        &mut self,
+        entry_price: f64,
+        pos: Position,
+    ) -> Result<()> {
+        let ppt = Helper::compute_partial_profit_target(entry_price, pos);
+        self.partial_profit_target = Ok(ppt.clone());
+
+        let _: () = self
+            .redis_conn
+            .set(
+                TRADING_PARTIAL_PROFIT_TARGET,
+                serde_json::to_string(&ppt.clone()).unwrap(),
+            )
+            .await?;
+
+        Ok(())
+    }
+
     pub async fn run_cycle(
         &mut self,
         price: f64,
@@ -547,6 +725,7 @@ impl<'a> Bot<'a> {
             Position::Flat => {
                 if self.zones.long_zones.iter().any(|z| z.contains(price)) {
                     info!("Ranger Entering LONG at {:.2}", price);
+                    let _: () = Self::delete_partial_profit_target(self).await?;
 
                     let exec_price = exchange.place_market_order(OrderSide::Buy, size).await?;
                     info!("Ranger Long executed at {:.2}", exec_price);
@@ -562,9 +741,13 @@ impl<'a> Bot<'a> {
                         self.config.ranger_risk_pct,
                     );
 
-                    self.current_pos_id = self.open_pos.id
+                    self.current_pos_id = self.open_pos.id;
+
+                    let _: Result<()> =
+                        Self::store_partial_profit_targets(self, price, self.pos).await;
                 } else if self.zones.short_zones.iter().any(|z| z.contains(price)) {
                     info!("Ranger Entering SHORT at {:.2}", price);
+                    let _: () = Self::delete_partial_profit_target(self).await?;
 
                     let exec_price = exchange.place_market_order(OrderSide::Sell, size).await?;
 
@@ -582,6 +765,8 @@ impl<'a> Bot<'a> {
                     );
 
                     self.current_pos_id = self.open_pos.id;
+                    let _: Result<()> =
+                        Self::store_partial_profit_targets(self, price, self.pos).await;
                 } else {
                     //warn!("Price {:.2} out of any Ranger zone -- staying flat", price);
                 }
@@ -607,6 +792,22 @@ impl<'a> Bot<'a> {
                     );
 
                     self.pos = Position::Flat;
+                }
+
+                let ppt = self
+                    .partial_profit_target
+                    .as_mut()
+                    .map_err(|_| {
+                        anyhow!("Unable to fetch partial profit targets for this LONG position")
+                    })
+                    .unwrap();
+
+                if ppt.iter().any(|z| z.contains(price, self.pos)) {
+                    info!(
+                        "LONG: Taking Partial Profits here.... {:?}, Take profit targets: {:?}",
+                        price, ppt
+                    );
+                    Self::take_partial_profit_on_long(self, price).await?;
                 }
 
                 // 2️⃣ Take‑profit: exit long when we hit the short zone.
@@ -635,6 +836,22 @@ impl<'a> Bot<'a> {
                     );
 
                     self.pos = Position::Flat;
+                }
+
+                let ppt = self
+                    .partial_profit_target
+                    .as_mut()
+                    .map_err(|_| {
+                        anyhow!("Unable to fetch partial profit targets for this SHORT position")
+                    })
+                    .unwrap();
+
+                if ppt.iter().any(|z| z.contains(price, self.pos)) {
+                    info!(
+                        "SHORT: Taking Partial Profits here.... {:?}, Take profit targets: {:?}",
+                        price, ppt
+                    );
+                    Self::take_partial_profit_on_short(self, price).await?;
                 }
 
                 // 3️⃣ Cover: exit short when we hit the long zone.

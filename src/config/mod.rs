@@ -30,6 +30,8 @@ pub struct Config {
 
     pub scalp_price_difference: f64,
     pub ranger_price_difference: f64,
+
+    pub profit_factor: f64,
 }
 
 fn default_interval() -> u64 {
@@ -79,6 +81,11 @@ impl Config {
             .and_then(|v| v.parse::<f64>().ok())
             .unwrap_or(1000.0);
 
+        let profit_factor = env::var("PARTIAL_PROFIT_FACTOR")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(400.0);
+
         let ranger_risk_pct = env::var("RANGER_RISK_PERCENTAGE")
             .ok()
             .and_then(|v| v.parse::<f64>().ok())
@@ -96,6 +103,7 @@ impl Config {
             ranger_risk_pct,
             scalp_price_difference,
             ranger_price_difference,
+            profit_factor,
         })
     }
 }
