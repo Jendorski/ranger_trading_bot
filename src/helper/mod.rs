@@ -1,5 +1,6 @@
 use crate::{bot::Position, config::Config};
 use chrono::{Local, Timelike};
+use uuid::Uuid;
 
 pub const TRADING_SCALPER_BOT_ACTIVE: &str = "trading_scalper_bot::active";
 pub const TRADIN_SCALPER_BOT_POSITION: &str = "trading_scalper_bot::position";
@@ -9,9 +10,47 @@ pub const TRADING_BOT_POSITION: &str = "trading_bot:position";
 pub const TRADING_BOT_ACTIVE: &str = "trading::active";
 pub const TRADING_BOT_CLOSE_POSITIONS: &str = "closed_positions";
 pub const TRADING_CAPITAL: &str = "trading_capital";
+pub const TRADING_PARTIAL_PROFIT_TARGET: &str = "trading_partial_profit_target";
 
 pub struct Helper {
     pub config: Config,
+}
+
+/// A target that says “close X % of my remaining qty when the market reaches Y”.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq)]
+pub struct PartialProfitTarget {
+    /// The price at which we want to take profit.
+    pub target_price: f64,
+
+    /// Fraction of *remaining* quantity to close (0.0–1.0).
+    pub fraction: f64,
+}
+
+impl PartialProfitTarget {
+    /// Returns true if price lies in the zone
+    #[inline]
+    pub fn contains(&self, price: f64, pos: Position) -> bool {
+        let high = self.target_price + 100.00;
+        // if pos == Position::Long {
+        //     return price <= self.target_price && price >= high;
+        // }
+
+        // if pos == Position::Short {
+        //     return price <= self.target_price;
+        // }
+
+        return price <= self.target_price && price >= high;
+    }
+}
+
+/// An action that the bot will send to the exchange.
+#[derive(Debug)]
+pub enum TradeAction {
+    /// Close a part of the position.
+    ClosePartial { order_id: Uuid, quantity: f64 },
+
+    /// Move an existing stop‑loss (or create one if none existed).
+    MoveStopLoss { new_stop_price: f64 },
 }
 
 impl Helper {
@@ -169,5 +208,51 @@ impl Helper {
         }
 
         false
+    }
+
+    pub fn compute_partial_profit_target(
+        entry_price: f64,
+        pos: Position,
+    ) -> Vec<PartialProfitTarget> {
+        //This should be gotten from the config
+        let profit_factor = Self::from_config().config.profit_factor;
+        let fraction = 0.25;
+
+        let mut vector: Vec<PartialProfitTarget> = Vec::new();
+
+        let mut count = 0;
+        let mut tp = entry_price;
+
+        if pos == Position::Long {
+            tp = entry_price + profit_factor;
+        }
+
+        if pos == Position::Short {
+            tp = entry_price - profit_factor;
+        }
+
+        // Loop as long as 'count' is less than 4.
+        while count < 4 {
+            if pos == Position::Long {
+                vector.push(PartialProfitTarget {
+                    target_price: tp,
+                    fraction,
+                });
+                tp += profit_factor;
+            }
+
+            if pos == Position::Short {
+                vector.push(PartialProfitTarget {
+                    target_price: tp,
+                    fraction,
+                });
+                tp -= profit_factor;
+            }
+
+            // Increment the counter by 1 in each iteration.
+            count += 1;
+        }
+
+        vector
     }
 }
