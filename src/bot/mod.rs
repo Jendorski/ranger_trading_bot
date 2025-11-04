@@ -51,8 +51,8 @@ impl Default for Zones {
                     high: 103_057.8,
                 },
                 Zone {
-                    low: 106_653.8,
-                    high: 106_856.8,
+                    low: 106_496.8,
+                    high: 106_596.8,
                 },
                 Zone {
                     low: 108_618.9,
@@ -413,7 +413,7 @@ impl<'a> Bot<'a> {
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
 
         //update the margin based on the pnl
-        let _ = Self::prepare_current_margin(self, pnl);
+        let _ = Self::prepare_current_margin(self, pnl).await;
     }
 
     pub async fn load_current_margin(
