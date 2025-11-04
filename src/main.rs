@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // 1️⃣ Load config
     let cfg = Config::from_env()?;
-    info!("Loaded config: {:?}", cfg);
+    //info!("Loaded config: {:?}", cfg);
 
     let mut binding = RedisClient::connect(&cfg.redis_url).await?;
     let redis_conn = binding.get_conn();

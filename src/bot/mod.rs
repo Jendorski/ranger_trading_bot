@@ -41,7 +41,7 @@ impl Default for Zones {
         Self {
             long_zones: vec![
                 Zone {
-                    low: 98_000.0,
+                    low: 99_976.0,
                     high: 100_000.0,
                 },
                 Zone {
@@ -305,6 +305,7 @@ impl<'a> Bot<'a> {
         let current_margin = Self::load_current_margin(&mut conn, config).await;
 
         let partial_profit_target = Self::load_partial_profit_target(&mut conn).await;
+        info!("partial_profit_target: {:?}", partial_profit_target);
 
         Ok(Self {
             pos,
@@ -321,7 +322,6 @@ impl<'a> Bot<'a> {
     async fn load_partial_profit_target(
         conn: &mut redis::aio::MultiplexedConnection,
     ) -> Result<Vec<PartialProfitTarget>> {
-        // `LRANGE 0 -1` returns the whole list (newest → oldest)
         let raw_jsons: String = conn.get(TRADING_PARTIAL_PROFIT_TARGET).await?;
 
         let vecs = serde_json::from_str::<Vec<PartialProfitTarget>>(&raw_jsons)
@@ -838,21 +838,21 @@ impl<'a> Bot<'a> {
                     self.pos = Position::Flat;
                 }
 
-                let ppt = self
-                    .partial_profit_target
-                    .as_mut()
-                    .map_err(|_| {
-                        anyhow!("Unable to fetch partial profit targets for this SHORT position")
-                    })
-                    .unwrap();
+                // let ppt = self
+                //     .partial_profit_target
+                //     .as_mut()
+                //     .map_err(|_| {
+                //         anyhow!("Unable to fetch partial profit targets for this SHORT position")
+                //     })
+                //     .unwrap();
 
-                if ppt.iter().any(|z| z.contains(price, self.pos)) {
-                    info!(
-                        "SHORT: Taking Partial Profits here.... {:?}, Take profit targets: {:?}",
-                        price, ppt
-                    );
-                    Self::take_partial_profit_on_short(self, price).await?;
-                }
+                // if ppt.iter().any(|z| z.contains(price, self.pos)) {
+                //     info!(
+                //         "SHORT: Taking Partial Profits here.... {:?}, Take profit targets: {:?}",
+                //         price, ppt
+                //     );
+                //     Self::take_partial_profit_on_short(self, price).await?;
+                // }
 
                 // 3️⃣ Cover: exit short when we hit the long zone.
                 if self.zones.long_zones.iter().any(|z| z.contains(price)) {
