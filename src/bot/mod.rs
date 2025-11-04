@@ -43,8 +43,8 @@ impl Default for Zones {
                     high: 100_000.0,
                 },
                 Zone {
-                    low: 102_169.9,
-                    high: 102_297.8,
+                    low: 102_069.9,
+                    high: 102_097.8,
                 },
                 Zone {
                     low: 102_979.9,
@@ -149,8 +149,8 @@ impl Default for Zones {
                     high: 102_850.0,
                 },
                 Zone {
-                    low: 101_908.0,
-                    high: 102_000.0,
+                    low: 101_988.8,
+                    high: 102_001.8,
                 },
             ],
         }
@@ -490,7 +490,7 @@ impl<'a> Bot<'a> {
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
 
         //update the margin based on the pnl
-        let _ = Self::prepare_current_margin(self, pnl);
+        let _ = Self::prepare_current_margin(self, pnl).await;
     }
 
     pub async fn take_profit_on_long(
