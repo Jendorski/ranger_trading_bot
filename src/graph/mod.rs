@@ -1,7 +1,6 @@
 use anyhow::Result;
 use anyhow::anyhow;
-use chrono::{Datelike, Local, Timelike};
-use log::info;
+use chrono::Datelike;
 use log::warn;
 use redis::{AsyncCommands, aio::MultiplexedConnection};
 use serde_json;
@@ -11,8 +10,8 @@ use std::collections::HashMap;
 use crate::bot::{self};
 use crate::config::Config;
 use crate::helper::Helper;
-use crate::helper::SCALPER_CLOSED_POSITIONS;
 use crate::helper::TRADING_BOT_CLOSE_POSITIONS;
+use crate::helper::TRADING_CAPITAL;
 
 pub struct Graph {
     pub config: Config,
@@ -291,7 +290,8 @@ impl Graph {
             "Date", "ID", "Side", "Entry", "Exit", "PnL ($)", "ROI (%)"
         );
         let mut total_pnl: f64 = 0.0;
-        let mut total_margin: f64 = 0.0;
+        let raw_margin: String = conn.get(TRADING_CAPITAL).await?;
+        let mut total_margin: f64 = serde_json::from_str::<f64>(&raw_margin)?;
 
         for pos in &positions {
             let (pnl, roi) = Self::pnl_and_roi(self, pos);
@@ -314,7 +314,7 @@ impl Graph {
         println!("\n------------------------------------------------------------------------");
         println!("\nCumulative realised PnL: ${:.2}", total_pnl);
         println!(
-            "Cumulative margin used (across all trades): ${:.2}",
+            "Cumulative margin used (across all trades): ${:.2},",
             total_margin
         );
 

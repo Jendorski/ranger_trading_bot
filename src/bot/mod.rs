@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use log::{info, warn};
 use redis::{AsyncCommands, RedisError};
 use serde::{Deserialize, Serialize};
+use std::result::Result::Ok;
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -312,8 +313,6 @@ impl<'a> Bot<'a> {
             .await
             .unwrap_or_else(|_| [].to_vec());
 
-        info!("partial_profit_target: {:?}", partial_profit_target);
-
         Ok(Self {
             pos,
             zones,
@@ -454,10 +453,12 @@ impl<'a> Bot<'a> {
     ) -> f64 {
         let key = TRADING_CAPITAL;
 
-        let json: Result<Option<String>, RedisError> = redis_conn.get(key).await;
+        let raw_margin: Result<Option<String>, RedisError> = redis_conn.get(key).await;
 
-        let margin = match json {
-            Ok(Some(json)) => serde_json::from_str::<f64>(&json).unwrap_or_else(|_| config.margin),
+        let margin = match raw_margin {
+            Ok(Some(raw_margin)) => {
+                serde_json::from_str::<f64>(&raw_margin).unwrap_or_else(|_| config.margin)
+            }
             Ok(None) => config.margin,
             Err(_) => config.margin,
         };
@@ -544,9 +545,8 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
-    async fn take_partial_profit_on_long(&mut self, price: f64) -> Result<()> {
+    async fn take_partial_profit_on_long(&mut self, price: f64, fraction: f64) -> Result<()> {
         let mut remaining_size = self.open_pos.quantity.unwrap_or_default();
-        let fraction = 0.25;
         let qty_to_close = fraction * remaining_size;
 
         if qty_to_close <= 0.0000 {
@@ -611,9 +611,8 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
-    async fn take_partial_profit_on_short(&mut self, price: f64) -> Result<()> {
+    async fn take_partial_profit_on_short(&mut self, price: f64, fraction: f64) -> Result<()> {
         let mut remaining_size = self.open_pos.quantity.unwrap_or_default();
-        let fraction = 0.25;
         let qty_to_close = fraction * remaining_size;
 
         if qty_to_close <= 0.0000 {
@@ -717,6 +716,60 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
+    async fn evaluate_long_partial_profit(&mut self, price: f64) -> Result<()> {
+        let hit = self
+            .partial_profit_target
+            .iter()
+            .find(|t| price >= t.target_price);
+
+        let target = match hit {
+            Some(t) => t,
+            None => &PartialProfitTarget {
+                target_price: 0.00,
+                fraction: 0.00,
+            },
+        };
+
+        if target.target_price == 0.00 || !target.target_price.is_finite() {
+            return Ok(());
+        }
+
+        info!(
+            "LONG: Taking Partial Profits here.... {:?}, Take profit targets: {:?}",
+            price, self.partial_profit_target
+        );
+        let _: () = Self::take_partial_profit_on_long(self, price, target.fraction).await?;
+
+        Ok(())
+    }
+
+    async fn evaluate_short_partial_profit(&mut self, price: f64) -> Result<()> {
+        let hit = self
+            .partial_profit_target
+            .iter()
+            .find(|t| price <= t.target_price);
+
+        let target = match hit {
+            Some(t) => t,
+            None => &PartialProfitTarget {
+                target_price: 0.00,
+                fraction: 0.00,
+            },
+        };
+
+        if target.target_price == 0.00 || !target.target_price.is_finite() {
+            return Ok(());
+        }
+
+        info!(
+            "SHORT: Taking Partial Profits here.... {:?}, Take profit targets: {:?}",
+            price, self.partial_profit_target
+        );
+        let _: () = Self::take_partial_profit_on_short(self, price, target.fraction).await?;
+
+        Ok(())
+    }
+
     pub async fn run_cycle(
         &mut self,
         price: f64,
@@ -801,22 +854,12 @@ impl<'a> Bot<'a> {
                     self.pos = Position::Flat;
                 }
 
-                if self
-                    .partial_profit_target
-                    .iter()
-                    .any(|z| z.contains(price, self.pos))
-                {
-                    info!(
-                        "LONG: Taking Partial Profits here.... {:?}, Take profit targets: {:?}",
-                        price, self.partial_profit_target
-                    );
-                    Self::take_partial_profit_on_long(self, price).await?;
-                }
-
                 // 2️⃣ Take‑profit: exit long when we hit the short zone.
                 if self.zones.short_zones.iter().any(|z| z.contains(price)) {
                     Self::take_profit_on_long(self, price, size, exchange).await?;
                 }
+
+                let _ = Self::evaluate_long_partial_profit(self, price).await?;
             }
 
             Position::Short => {
@@ -841,22 +884,12 @@ impl<'a> Bot<'a> {
                     self.pos = Position::Flat;
                 }
 
-                if self
-                    .partial_profit_target
-                    .iter()
-                    .any(|z| z.contains(price, self.pos))
-                {
-                    info!(
-                        "SHORT: Taking Partial Profits here.... {:?}, Take profit targets: {:?}",
-                        price, self.partial_profit_target
-                    );
-                    Self::take_partial_profit_on_short(self, price).await?;
-                }
-
                 // 3️⃣ Cover: exit short when we hit the long zone.
                 if self.zones.long_zones.iter().any(|z| z.contains(price)) {
                     Self::take_profit_on_short(self, price, size, exchange).await?;
                 }
+
+                let _ = Self::evaluate_short_partial_profit(self, price).await;
             }
         }
         self.store_position(self.pos, self.open_pos).await?;

@@ -30,16 +30,18 @@ impl PartialProfitTarget {
     /// Returns true if price lies in the zone
     #[inline]
     pub fn contains(&self, price: f64, pos: Position) -> bool {
-        let high = self.target_price + 100.00;
-        // if pos == Position::Long {
-        //     return price <= self.target_price && price >= high;
-        // }
+        let mut high = self.target_price;
+        if pos == Position::Long {
+            high = self.target_price + 100.00;
+            return price >= self.target_price || price >= high;
+        }
 
-        // if pos == Position::Short {
-        //     return price <= self.target_price;
-        // }
+        if pos == Position::Short {
+            high = self.target_price - 100.00;
+            return price <= self.target_price || price <= high;
+        }
 
-        return price <= self.target_price && price >= high;
+        return false;
     }
 }
 
