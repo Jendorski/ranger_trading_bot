@@ -562,7 +562,7 @@ impl<'a> Bot<'a> {
 
         let profit_factor = self.config.profit_factor;
 
-        let new_sl = profit_factor + self.open_pos.sl.unwrap_or_default();
+        let new_sl = self.open_pos.sl.unwrap_or_default() + profit_factor;
 
         let roi = Helper::calc_roi(
             &mut Helper::from_config(),
@@ -628,7 +628,7 @@ impl<'a> Bot<'a> {
 
         let profit_factor = self.config.profit_factor;
 
-        let new_sl = profit_factor + self.open_pos.sl.unwrap_or_default();
+        let new_sl = self.open_pos.sl.unwrap_or_default() - profit_factor;
 
         let roi = Helper::calc_roi(
             &mut Helper::from_config(),
@@ -723,6 +723,7 @@ impl<'a> Bot<'a> {
             .position(|t| price >= t.target_price);
 
         let idx = idx_opt.unwrap_or(usize::MAX);
+        info!("LONG idx: {:?}", idx);
 
         if idx == usize::MAX {
             return Ok(());
@@ -742,6 +743,19 @@ impl<'a> Bot<'a> {
 
         self.partial_profit_target.remove(idx);
 
+        warn!(
+            "self.partial_profit_target: {:?}",
+            self.partial_profit_target
+        );
+
+        let _: () = self
+            .redis_conn
+            .set(
+                TRADING_PARTIAL_PROFIT_TARGET,
+                serde_json::to_string(&self.partial_profit_target.clone()).unwrap(),
+            )
+            .await?;
+
         Ok(())
     }
 
@@ -752,6 +766,7 @@ impl<'a> Bot<'a> {
             .position(|t| price <= t.target_price);
 
         let idx = idx_opt.unwrap_or(usize::MAX);
+        info!("SHORT idx: {:?}", idx);
 
         if idx == usize::MAX {
             return Ok(());
@@ -770,6 +785,18 @@ impl<'a> Bot<'a> {
         let _: () = Self::take_partial_profit_on_short(self, price, target.fraction).await?;
 
         self.partial_profit_target.remove(idx);
+        warn!(
+            "self.partial_profit_target: {:?}",
+            self.partial_profit_target
+        );
+
+        let _: () = self
+            .redis_conn
+            .set(
+                TRADING_PARTIAL_PROFIT_TARGET,
+                serde_json::to_string(&self.partial_profit_target.clone()).unwrap(),
+            )
+            .await?;
 
         Ok(())
     }
