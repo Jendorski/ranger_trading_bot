@@ -723,7 +723,6 @@ impl<'a> Bot<'a> {
             .position(|t| price >= t.target_price);
 
         let idx = idx_opt.unwrap_or(usize::MAX);
-        info!("LONG idx: {:?}", idx);
 
         if idx == usize::MAX {
             return Ok(());
@@ -766,7 +765,6 @@ impl<'a> Bot<'a> {
             .position(|t| price <= t.target_price);
 
         let idx = idx_opt.unwrap_or(usize::MAX);
-        info!("SHORT idx: {:?}", idx);
 
         if idx == usize::MAX {
             return Ok(());
