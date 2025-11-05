@@ -717,18 +717,18 @@ impl<'a> Bot<'a> {
     }
 
     async fn evaluate_long_partial_profit(&mut self, price: f64) -> Result<()> {
-        let hit = self
+        let idx_opt = self
             .partial_profit_target
             .iter()
-            .find(|t| price >= t.target_price);
+            .position(|t| price >= t.target_price);
 
-        let target = match hit {
-            Some(t) => t,
-            None => &PartialProfitTarget {
-                target_price: 0.00,
-                fraction: 0.00,
-            },
-        };
+        let idx = idx_opt.unwrap_or(usize::MAX);
+
+        if idx == usize::MAX {
+            return Ok(());
+        }
+
+        let target = self.partial_profit_target[idx].clone();
 
         if target.target_price == 0.00 || !target.target_price.is_finite() {
             return Ok(());
@@ -740,22 +740,24 @@ impl<'a> Bot<'a> {
         );
         let _: () = Self::take_partial_profit_on_long(self, price, target.fraction).await?;
 
+        self.partial_profit_target.remove(idx);
+
         Ok(())
     }
 
     async fn evaluate_short_partial_profit(&mut self, price: f64) -> Result<()> {
-        let hit = self
+        let idx_opt = self
             .partial_profit_target
             .iter()
-            .find(|t| price <= t.target_price);
+            .position(|t| price <= t.target_price);
 
-        let target = match hit {
-            Some(t) => t,
-            None => &PartialProfitTarget {
-                target_price: 0.00,
-                fraction: 0.00,
-            },
-        };
+        let idx = idx_opt.unwrap_or(usize::MAX);
+
+        if idx == usize::MAX {
+            return Ok(());
+        }
+
+        let target = self.partial_profit_target[idx].clone();
 
         if target.target_price == 0.00 || !target.target_price.is_finite() {
             return Ok(());
@@ -766,6 +768,8 @@ impl<'a> Bot<'a> {
             price, self.partial_profit_target
         );
         let _: () = Self::take_partial_profit_on_short(self, price, target.fraction).await?;
+
+        self.partial_profit_target.remove(idx);
 
         Ok(())
     }
