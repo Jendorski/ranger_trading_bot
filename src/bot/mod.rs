@@ -9,13 +9,13 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::exchange::{Exchange, OrderSide};
+use crate::helper::TRADING_PARTIAL_PROFIT_TARGET;
 use crate::helper::{
     Helper, PartialProfitTarget, TRADING_BOT_ACTIVE, TRADING_BOT_CLOSE_POSITIONS,
     TRADING_BOT_POSITION, TRADING_BOT_ZONES, TRADING_CAPITAL,
 };
-use crate::helper::{TRADING_PARTIAL_PROFIT_TARGET, TradeAction};
 
-pub mod scalper;
+//pub mod scalper;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Zone {
@@ -46,6 +46,10 @@ impl Default for Zones {
                     high: 74_034.80,
                 },
                 Zone {
+                    low: 90_106.80,
+                    high: 90_134.80,
+                },
+                Zone {
                     low: 98_179.40,
                     high: 98_199.00,
                 },
@@ -58,6 +62,10 @@ impl Default for Zones {
                 //     low: 106_496.8,
                 //     high: 106_596.8,
                 // },
+                Zone {
+                    low: 104_618.9,
+                    high: 104_640.10,
+                },
                 Zone {
                     low: 108_618.9,
                     high: 108_722.8,
@@ -144,6 +152,10 @@ impl Default for Zones {
                     low: 108_511.0,
                     high: 108_646.0,
                 },
+                Zone {
+                    low: 104_511.00,
+                    high: 104_596.30,
+                },
                 //These zones are chop city
                 // Zone {
                 //     low: 106_384.0,
@@ -156,6 +168,10 @@ impl Default for Zones {
                 Zone {
                     low: 98_030.10,
                     high: 98_079.60,
+                },
+                Zone {
+                    low: 89_906.80,
+                    high: 90_008.60,
                 },
                 Zone {
                     low: 73_906.80,
@@ -202,6 +218,12 @@ pub struct ClosedPosition {
     pub margin: Option<f64>,
 }
 
+impl ClosedPosition {
+    pub fn as_str(&self) -> String {
+        serde_json::to_string(self).unwrap()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct OpenPosition {
     pub id: Uuid,         // unique identifier
@@ -218,7 +240,7 @@ pub struct OpenPosition {
 }
 
 impl OpenPosition {
-    fn as_str(&self) -> String {
+    pub fn as_str(&self) -> String {
         serde_json::to_string(self).unwrap()
     }
 

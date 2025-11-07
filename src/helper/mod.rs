@@ -1,6 +1,5 @@
 use crate::{bot::Position, config::Config};
 use chrono::{Local, Timelike};
-use uuid::Uuid;
 
 pub const TRADING_SCALPER_BOT_ACTIVE: &str = "trading_scalper_bot::active";
 pub const TRADIN_SCALPER_BOT_POSITION: &str = "trading_scalper_bot::position";
@@ -24,35 +23,8 @@ pub struct PartialProfitTarget {
 
     /// Fraction of *remaining* quantity to close (0.0–1.0).
     pub fraction: f64,
-}
 
-impl PartialProfitTarget {
-    /// Returns true if price lies in the zone
-    #[inline]
-    pub fn contains(&self, price: f64, pos: Position) -> bool {
-        let mut high = self.target_price;
-        if pos == Position::Long {
-            high = self.target_price + 100.00;
-            return price >= self.target_price || price >= high;
-        }
-
-        if pos == Position::Short {
-            high = self.target_price - 100.00;
-            return price <= self.target_price || price <= high;
-        }
-
-        return false;
-    }
-}
-
-/// An action that the bot will send to the exchange.
-#[derive(Debug)]
-pub enum TradeAction {
-    /// Close a part of the position.
-    ClosePartial { order_id: Uuid, quantity: f64 },
-
-    /// Move an existing stop‑loss (or create one if none existed).
-    MoveStopLoss { new_stop_price: f64 },
+    pub position: usize,
 }
 
 impl Helper {
@@ -239,6 +211,7 @@ impl Helper {
                 vector.push(PartialProfitTarget {
                     target_price: tp,
                     fraction,
+                    position: count + 1,
                 });
                 tp += profit_factor;
             }
@@ -247,6 +220,7 @@ impl Helper {
                 vector.push(PartialProfitTarget {
                     target_price: tp,
                     fraction,
+                    position: count + 1,
                 });
                 tp -= profit_factor;
             }
