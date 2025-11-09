@@ -259,13 +259,6 @@ impl OpenPosition {
         }
     }
 
-    async fn load_current_position_id(
-        conn: &mut redis::aio::MultiplexedConnection,
-    ) -> Result<Uuid> {
-        let json: String = conn.get("current_position_id").await?;
-        Ok(serde_json::from_str(&json)?)
-    }
-
     async fn load_open_position(
         conn: &mut redis::aio::MultiplexedConnection,
         //id: Uuid,
@@ -292,8 +285,6 @@ impl OpenPosition {
 /// Trading state – we keep track of whether we have an open position
 #[derive(Debug)]
 pub struct Bot<'a> {
-    pub current_pos_id: Uuid,
-
     pub open_pos: OpenPosition,
 
     pub pos: Position,
@@ -323,10 +314,6 @@ impl<'a> Bot<'a> {
             .await
             .unwrap_or_else(|_| Zones::default());
 
-        let current_pos_id = OpenPosition::load_current_position_id(&mut conn)
-            .await
-            .unwrap_or_else(|_| Uuid::nil());
-
         let open_pos = OpenPosition::load_open_position(&mut conn)
             .await
             .unwrap_or_else(|_| OpenPosition::default_open_position());
@@ -341,7 +328,6 @@ impl<'a> Bot<'a> {
             pos,
             zones,
             redis_conn: conn,
-            current_pos_id,
             open_pos,
             config,
             current_margin,
@@ -726,7 +712,12 @@ impl<'a> Bot<'a> {
         entry_price: f64,
         pos: Position,
     ) -> Result<()> {
-        let ppt = Helper::compute_partial_profit_target(entry_price, pos);
+        let ppt = Helper::build_profit_targets(
+            entry_price,
+            self.open_pos.sl.unwrap(),
+            self.config.ranger_price_difference,
+            pos,
+        );
         self.partial_profit_target = ppt.clone();
 
         let _: () = self
@@ -854,8 +845,6 @@ impl<'a> Bot<'a> {
                         self.config.ranger_risk_pct,
                     );
 
-                    self.current_pos_id = self.open_pos.id;
-
                     let _: Result<()> =
                         Self::store_partial_profit_targets(self, price, self.pos).await;
                 } else if self.zones.short_zones.iter().any(|z| z.contains(price)) {
@@ -877,7 +866,6 @@ impl<'a> Bot<'a> {
                         self.config.ranger_risk_pct,
                     );
 
-                    self.current_pos_id = self.open_pos.id;
                     let _: Result<()> =
                         Self::store_partial_profit_targets(self, price, self.pos).await;
                 } else {

@@ -29,7 +29,7 @@ pub struct Config {
     pub ranger_risk_pct: f64,
 
     // pub scalp_price_difference: f64,
-    // pub ranger_price_difference: f64,
+    pub ranger_price_difference: f64,
     pub profit_factor: f64,
 }
 
@@ -75,10 +75,10 @@ impl Config {
         //     .and_then(|v| v.parse::<f64>().ok())
         //     .unwrap_or(400.0);
 
-        // let ranger_price_difference = env::var("RANGER_PRICE_DIFFERENCE")
-        //     .ok()
-        //     .and_then(|v| v.parse::<f64>().ok())
-        //     .unwrap_or(1000.0);
+        let ranger_price_difference = env::var("RANGER_PRICE_DIFFERENCE")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(1000.0);
 
         let profit_factor = env::var("PARTIAL_PROFIT_FACTOR")
             .ok()
@@ -101,7 +101,7 @@ impl Config {
             risk_pct,
             ranger_risk_pct,
             // scalp_price_difference,
-            // ranger_price_difference,
+            ranger_price_difference,
             profit_factor,
         })
     }

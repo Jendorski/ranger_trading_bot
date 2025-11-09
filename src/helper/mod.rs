@@ -1,5 +1,7 @@
 use crate::{bot::Position, config::Config};
 use chrono::{Local, Timelike};
+use log::info;
+use std::fmt;
 
 pub const TRADING_SCALPER_BOT_ACTIVE: &str = "trading_scalper_bot::active";
 pub const TRADIN_SCALPER_BOT_POSITION: &str = "trading_scalper_bot::position";
@@ -24,7 +26,20 @@ pub struct PartialProfitTarget {
     /// Fraction of *remaining* quantity to close (0.0–1.0).
     pub fraction: f64,
 
-    pub position: usize,
+    //The SL the Position MUST be in when the target price is hit
+    pub sl: f64,
+}
+
+impl fmt::Display for PartialProfitTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "TP @ {:.2}  →  SL @ {:.2}  (close {:.0}% of remaining)",
+            self.target_price,
+            self.sl,
+            self.fraction * 100.0
+        )
+    }
 }
 
 impl Helper {
@@ -184,6 +199,79 @@ impl Helper {
         false
     }
 
+    fn tp_prices(
+        ranger_price_difference: f64,
+        entry_price: f64,
+        tp_counts: usize,
+        pos: Position,
+    ) -> Vec<f64> {
+        let ranger_price_difference = ranger_price_difference;
+
+        let mut count = 0;
+        let mut tp = entry_price;
+
+        let mut tp_pr: Vec<f64> = Vec::with_capacity(tp_counts);
+
+        while count < tp_counts {
+            if pos == Position::Long {
+                tp += ranger_price_difference;
+                tp_pr.push(tp);
+            }
+            if pos == Position::Short {
+                tp -= ranger_price_difference;
+                tp_pr.push(tp);
+            }
+
+            count += 1;
+        }
+
+        tp_pr
+    }
+
+    pub fn build_profit_targets(
+        entry_price: f64,
+        original_sl: f64,
+        ranger_price_difference: f64,
+        pos: Position,
+    ) -> Vec<PartialProfitTarget> {
+        let tp_counts: usize = 4;
+
+        let fractions: Option<&[f64]> = Some(&[0.25, 0.40, 0.25, 0.10]);
+
+        let tp_prices = Helper::tp_prices(ranger_price_difference, entry_price, tp_counts, pos);
+        info!("tp_prices: {:?}", tp_prices);
+
+        // Default fraction = 25 % if not supplied.
+        let default_frac = 0.25;
+        let fracs: Vec<f64> = match fractions {
+            Some(f) => f.iter().copied().collect(),
+            None => vec![default_frac; tp_prices.len()],
+        };
+
+        let mut targets = Vec::with_capacity(tp_prices.len());
+
+        for (i, &tp) in tp_prices.iter().enumerate() {
+            // Determine the new stop‑loss after this TP.
+            let new_sl = if i == 0 {
+                original_sl // move SL to entry price
+            } else if i == 1 {
+                entry_price // TP2 → SL is moved to entry_price
+            } else {
+                tp_prices[i - 2] // TP3+ → the target two steps before
+            };
+
+            let fraction = fracs.get(i).copied().unwrap_or(default_frac);
+
+            targets.push(PartialProfitTarget {
+                target_price: tp,
+                sl: new_sl,
+                fraction,
+            });
+        }
+
+        targets
+    }
+
     pub fn compute_partial_profit_target(
         entry_price: f64,
         pos: Position,
@@ -205,13 +293,25 @@ impl Helper {
             tp = entry_price - profit_factor;
         }
 
+        /**
+         * SHORT:
+         * ENTRY: 104000 -> SL: 104995
+         * TP1: 103200 -> SL: ENTRY SL
+         * TP2: 102500 -> SL: ENTRY
+         * TP3: 101800 -> SL: TP1
+         * TP$: 101000 -> SL: TP2
+         */
         // Loop as long as 'count' is less than 4.
+        let mut position = 0;
+        // let mut sl =
         while count < 4 {
+            position = count + 1;
             if pos == Position::Long {
+                if position == 1 {}
                 vector.push(PartialProfitTarget {
                     target_price: tp,
                     fraction,
-                    position: count + 1,
+                    sl: 0.00,
                 });
                 tp += profit_factor;
             }
@@ -220,7 +320,7 @@ impl Helper {
                 vector.push(PartialProfitTarget {
                     target_price: tp,
                     fraction,
-                    position: count + 1,
+                    sl: 0.00,
                 });
                 tp -= profit_factor;
             }
