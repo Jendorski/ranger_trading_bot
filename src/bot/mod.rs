@@ -36,7 +36,9 @@ pub struct Zones {
     pub long_zones: Vec<Zone>,
     pub short_zones: Vec<Zone>,
 }
-
+/**
+ * For Zones, add a 1000 difference between a long and short zone.
+ */
 impl Default for Zones {
     fn default() -> Self {
         Self {
@@ -46,8 +48,8 @@ impl Default for Zones {
                     high: 74_034.80,
                 },
                 Zone {
-                    low: 90_106.80,
-                    high: 90_134.80,
+                    low: 90_906.80,
+                    high: 91_134.80,
                 },
                 Zone {
                     low: 98_179.40,
@@ -63,8 +65,8 @@ impl Default for Zones {
                 //     high: 106_596.8,
                 // },
                 Zone {
-                    low: 104_618.9,
-                    high: 104_640.10,
+                    low: 105_118.9,
+                    high: 105_240.10,
                 },
                 Zone {
                     low: 108_618.9,
