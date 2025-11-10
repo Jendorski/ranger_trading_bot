@@ -493,11 +493,14 @@ impl<'a> Bot<'a> {
         if current_margin <= 5.00 {
             warn!("current_margin is rekt, {:2}", current_margin);
             current_margin = self.config.margin;
+            self.open_pos.margin = Some(current_margin);
         }
 
         self.current_margin = current_margin;
+        self.open_pos.margin = Some(current_margin);
 
         let _ = Self::store_current_margin(current_margin, &mut self.redis_conn).await;
+        let _ = OpenPosition::store_open_position(self.redis_conn.clone(), self.open_pos).await;
 
         return current_margin;
     }
