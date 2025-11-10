@@ -467,13 +467,19 @@ impl<'a> Bot<'a> {
 
         let raw_margin: Result<Option<String>, RedisError> = redis_conn.get(key).await;
 
-        let margin = match raw_margin {
+        let mut margin = match raw_margin {
             Ok(Some(raw_margin)) => {
                 serde_json::from_str::<f64>(&raw_margin).unwrap_or_else(|_| config.margin)
             }
             Ok(None) => config.margin,
             Err(_) => config.margin,
         };
+
+        if margin < 5.00 {
+            warn!("margin as we know it is rekt, {:2}", margin);
+            margin = config.margin;
+            return margin;
+        }
 
         return margin;
     }
@@ -483,6 +489,11 @@ impl<'a> Bot<'a> {
 
         current_margin += pnl;
         info!("current_margin, {:2}", current_margin);
+
+        if current_margin < 5.00 {
+            warn!("current_margin is rekt, {:2}", current_margin);
+            current_margin = self.config.margin;
+        }
 
         self.current_margin = current_margin;
 
