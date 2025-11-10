@@ -69,8 +69,8 @@ impl Default for Zones {
                     high: 105_240.10,
                 },
                 Zone {
-                    low: 108_618.9,
-                    high: 108_722.8,
+                    low: 109_018.9,
+                    high: 109_122.8,
                 },
                 Zone {
                     low: 113_293.9,
