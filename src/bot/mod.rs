@@ -475,7 +475,7 @@ impl<'a> Bot<'a> {
             Err(_) => config.margin,
         };
 
-        if margin < 5.00 {
+        if margin <= 5.00 {
             warn!("margin as we know it is rekt, {:2}", margin);
             margin = config.margin;
             return margin;
@@ -490,7 +490,7 @@ impl<'a> Bot<'a> {
         current_margin += pnl;
         info!("current_margin, {:2}", current_margin);
 
-        if current_margin < 5.00 {
+        if current_margin <= 5.00 {
             warn!("current_margin is rekt, {:2}", current_margin);
             current_margin = self.config.margin;
         }
