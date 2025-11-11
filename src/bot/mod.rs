@@ -570,7 +570,12 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
-    async fn take_partial_profit_on_long(&mut self, price: f64, fraction: f64) -> Result<()> {
+    async fn take_partial_profit_on_long(
+        &mut self,
+        price: f64,
+        fraction: f64,
+        new_sl: f64,
+    ) -> Result<()> {
         let mut remaining_size = self.open_pos.quantity.unwrap_or_default();
         let qty_to_close = fraction * remaining_size;
 
@@ -582,12 +587,9 @@ impl<'a> Bot<'a> {
 
         if remaining_size <= 0.0000 {
             self.open_pos.quantity = Some(remaining_size);
+            self.open_pos.position_size = remaining_size;
             Self::close_long_position(self, price).await;
         }
-
-        let profit_factor = self.config.profit_factor;
-
-        let new_sl = self.open_pos.sl.unwrap_or_default() + profit_factor;
 
         let roi = Helper::calc_roi(
             &mut Helper::from_config(),
@@ -632,11 +634,16 @@ impl<'a> Bot<'a> {
         };
 
         warn!("NEW SL for LONG is: {:?}", new_sl);
-
+        self.store_position(self.pos, self.open_pos).await?;
         Ok(())
     }
 
-    async fn take_partial_profit_on_short(&mut self, price: f64, fraction: f64) -> Result<()> {
+    async fn take_partial_profit_on_short(
+        &mut self,
+        price: f64,
+        fraction: f64,
+        new_sl: f64,
+    ) -> Result<()> {
         let mut remaining_size = self.open_pos.quantity.unwrap_or_default();
         let qty_to_close = fraction * remaining_size;
 
@@ -648,12 +655,9 @@ impl<'a> Bot<'a> {
 
         if remaining_size <= 0.0000 {
             self.open_pos.quantity = Some(remaining_size);
+            self.open_pos.position_size = remaining_size;
             Self::close_short_position(self, price).await;
         }
-
-        let profit_factor = self.config.profit_factor;
-
-        let new_sl = self.open_pos.sl.unwrap_or_default() - profit_factor;
 
         let roi = Helper::calc_roi(
             &mut Helper::from_config(),
@@ -696,6 +700,7 @@ impl<'a> Bot<'a> {
             leverage: self.open_pos.leverage,
             risk_pct: self.open_pos.risk_pct,
         };
+        self.store_position(self.pos, self.open_pos).await?;
 
         warn!("NEW SL for SHORT is: {:?}", new_sl);
 
@@ -768,7 +773,8 @@ impl<'a> Bot<'a> {
             "LONG: Taking Partial Profits here.... {:?}, Take profit targets: {:?}",
             price, self.partial_profit_target
         );
-        let _: () = Self::take_partial_profit_on_long(self, price, target.fraction).await?;
+        let _: () =
+            Self::take_partial_profit_on_long(self, price, target.fraction, target.sl).await?;
 
         self.partial_profit_target.remove(idx);
 
@@ -810,7 +816,8 @@ impl<'a> Bot<'a> {
             "SHORT: Taking Partial Profits here.... {:?}, Take profit targets: {:?}",
             price, self.partial_profit_target
         );
-        let _: () = Self::take_partial_profit_on_short(self, price, target.fraction).await?;
+        let _: () =
+            Self::take_partial_profit_on_short(self, price, target.fraction, target.sl).await?;
 
         self.partial_profit_target.remove(idx);
         warn!(
