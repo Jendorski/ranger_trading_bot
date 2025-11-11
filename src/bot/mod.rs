@@ -396,7 +396,6 @@ impl<'a> Bot<'a> {
         &mut self,
         pos: Position,
         entry_price: f64,
-        position_size: f64,
         leverage: f64,
         risk_pct: f64,
     ) -> OpenPosition {
@@ -407,7 +406,7 @@ impl<'a> Bot<'a> {
             id: Uuid::new_v4(),
             pos: pos,
             entry_price: entry_price,
-            position_size, //does the same thing as quantity :(
+            position_size: qty, //does the same thing as quantity :(
             entry_time: Utc::now(),
             sl: Some(sl),
             margin: Some(current_margin),
@@ -839,7 +838,7 @@ impl<'a> Bot<'a> {
         // info!("Price = {:.2} | State = {:?}", price, self.pos);
         warn!("Ranger State = {:?}", self.pos);
 
-        let size = Helper::contract_amount(price, self.config.margin, self.config.leverage);
+        let size = Helper::contract_amount(price, self.current_margin, self.config.leverage);
 
         match self.pos {
             Position::Flat => {
@@ -856,7 +855,6 @@ impl<'a> Bot<'a> {
                         self,
                         self.pos,
                         price,
-                        size,
                         self.config.leverage,
                         self.config.ranger_risk_pct,
                     );
@@ -877,7 +875,6 @@ impl<'a> Bot<'a> {
                         self,
                         Position::Short,
                         price,
-                        size,
                         self.config.leverage,
                         self.config.ranger_risk_pct,
                     );
