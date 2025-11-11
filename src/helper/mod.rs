@@ -236,10 +236,9 @@ impl Helper {
     ) -> Vec<PartialProfitTarget> {
         let tp_counts: usize = 4;
 
-        let fractions: Option<&[f64]> = Some(&[0.25, 0.40, 0.25, 0.10]);
+        let fractions: Option<&[f64]> = Some(&[0.35, 0.30, 0.25, 0.10]);
 
         let tp_prices = Helper::tp_prices(ranger_price_difference, entry_price, tp_counts, pos);
-        info!("tp_prices: {:?}", tp_prices);
 
         // Default fraction = 25 % if not supplied.
         let default_frac = 0.25;
