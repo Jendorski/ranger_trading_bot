@@ -496,7 +496,6 @@ impl<'a> Bot<'a> {
         }
 
         self.current_margin = current_margin;
-        self.open_pos.margin = Some(current_margin);
 
         let _ = Self::store_current_margin(current_margin, &mut self.redis_conn).await;
         let _ = OpenPosition::store_open_position(self.redis_conn.clone(), self.open_pos).await;
