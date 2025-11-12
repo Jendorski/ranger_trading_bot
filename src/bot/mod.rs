@@ -582,6 +582,14 @@ impl<'a> Bot<'a> {
             Self::close_long_position(self, price).await;
         }
 
+        if self.partial_profit_target.len() == 0 {
+            info!(
+                "ALL TARGETS HIT FOR LONG!: {:?}",
+                self.partial_profit_target
+            );
+            self.pos = Position::Flat;
+        }
+
         remaining_size -= qty_to_close;
 
         if remaining_size <= 0.0000 {
@@ -648,6 +656,14 @@ impl<'a> Bot<'a> {
 
         if qty_to_close <= 0.0000 {
             Self::close_short_position(self, price).await;
+        }
+
+        if self.partial_profit_target.len() == 0 {
+            info!(
+                "ALL TARGETS HIT FOR SHORT!: {:?}",
+                self.partial_profit_target
+            );
+            self.pos = Position::Flat;
         }
 
         remaining_size -= qty_to_close;
