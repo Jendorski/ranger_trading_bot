@@ -44,16 +44,16 @@ impl Default for Zones {
         Self {
             long_zones: vec![
                 Zone {
-                    low: 74_206.80,
-                    high: 74_294.80,
+                    low: 74_306.80,
+                    high: 74_394.80,
                 },
                 Zone {
-                    low: 90_906.80,
+                    low: 91_106.80,
                     high: 91_134.80,
                 },
                 Zone {
-                    low: 98_579.40,
-                    high: 98_599.00,
+                    low: 99_079.40,
+                    high: 99_299.00,
                 },
                 //These zones are chop city
                 // Zone {
