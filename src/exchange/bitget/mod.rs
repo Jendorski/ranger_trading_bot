@@ -21,10 +21,12 @@ pub struct PriceResponse {
     pub data: Vec<PriceData>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Prices {
-    //pub price: f64,
-    //pub index_price: f64,
+    pub price: f64,
+    #[serde(rename = "indexPrice")]
+    pub index_price: f64,
+    #[serde(rename = "markPrice")]
     pub mark_price: f64,
 }
 
@@ -35,8 +37,8 @@ pub fn parse_price_response(json: &str) -> Result<Vec<Prices>> {
         .data
         .into_iter()
         .map(|item| Prices {
-            //price: item.price.parse().unwrap_or(0.0),
-            //index_price: item.index_price.parse().unwrap_or(0.0),
+            price: item.price.parse().unwrap_or(0.0),
+            index_price: item.index_price.parse().unwrap_or(0.0),
             mark_price: item.mark_price.parse().unwrap_or(0.0),
         })
         .collect();

@@ -252,9 +252,9 @@ impl Helper {
         for (i, &tp) in tp_prices.iter().enumerate() {
             // Determine the new stop‑loss after this TP.
             let new_sl = if i == 0 {
-                original_sl // move SL to entry price
+                entry_price // move SL to entry price
             } else if i == 1 {
-                entry_price // TP2 → SL is moved to entry_price
+                tp_prices[0] //entry_price // TP2 → SL is moved to TP1
             } else {
                 tp_prices[i - 2] // TP3+ → the target two steps before
             };
