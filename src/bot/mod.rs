@@ -43,18 +43,18 @@ impl Default for Zones {
     fn default() -> Self {
         Self {
             long_zones: vec![
-                Zone {
-                    low: 74_306.80,
-                    high: 74_394.80,
-                },
-                Zone {
-                    low: 91_106.80,
-                    high: 91_134.80,
-                },
-                Zone {
-                    low: 93_030.10,
-                    high: 93_179.60,
-                },
+                // Zone {
+                //     low: 74_306.80,
+                //     high: 74_394.80,
+                // },
+                // Zone {
+                //     low: 91_106.80,
+                //     high: 91_134.80,
+                // },
+                // Zone {
+                //     low: 93_030.10,
+                //     high: 93_179.60,
+                // },
                 Zone {
                     low: 99_079.40,
                     high: 99_299.00,
