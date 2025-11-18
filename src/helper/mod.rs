@@ -54,28 +54,28 @@ impl Helper {
         position_size: f64,
         exit_price: f64,
     ) -> f64 {
-        let mut pnl = 0.00;
+        let mut pnl_diff = 0.00;
 
         if !entry_price.is_finite() || !exit_price.is_finite() {
-            pnl = 0.00;
+            return 0.00;
         }
 
         if pos == Position::Long && exit_price != 0.00 && entry_price != 0.00 {
-            pnl = exit_price - entry_price;
+            pnl_diff = exit_price - entry_price;
         }
 
         if pos == Position::Short && exit_price != 0.00 && entry_price != 0.00 {
-            pnl = entry_price - exit_price;
+            pnl_diff = entry_price - exit_price;
         }
 
         if pos == Position::Flat {
-            pnl = 0.00;
+            pnl_diff = 0.00;
         }
 
         let pos_size = position_size;
 
-        if pnl.is_finite() && pos_size.is_finite() {
-            return pnl * pos_size;
+        if pnl_diff.is_finite() && pos_size.is_finite() {
+            return pnl_diff * pos_size;
         }
 
         return 0.00;
@@ -134,20 +134,25 @@ impl Helper {
         }
 
         let mut pl = 0.00;
+        let mut pl_diff = 0.00;
 
         if pos == Position::Long {
-            pl = (exit - entry) / entry;
+            pl_diff = exit - entry;
         }
 
         if pos == Position::Short {
-            pl = (entry - exit) / entry;
+            pl_diff = entry - exit;
         }
 
         if pos == Position::Flat {
             pl = 0.00;
+            pl_diff = 0.00
         }
 
-        return pl * leverage * 100.00;
+        pl = pl_diff / entry;
+
+        //Wondering why I added leverage here in the first place
+        return pl * 100.00; //leverage *
     }
 
     pub fn stop_loss_price(
