@@ -55,23 +55,23 @@ impl Default for Zones {
                 //     low: 93_030.10,
                 //     high: 93_179.60,
                 // },
-                Zone {
-                    low: 99_079.40,
-                    high: 99_299.00,
-                },
-                //These zones are chop city
                 // Zone {
-                //     low: 102_979.9,
-                //     high: 103_057.8,
+                //     low: 99_079.40,
+                //     high: 99_299.00,
                 // },
+                // //These zones are chop city
+                // // Zone {
+                // //     low: 102_979.9,
+                // //     high: 103_057.8,
+                // // },
+                // // Zone {
+                // //     low: 106_496.8,
+                // //     high: 106_596.8,
+                // // },
                 // Zone {
-                //     low: 106_496.8,
-                //     high: 106_596.8,
+                //     low: 105_118.9,
+                //     high: 105_240.10,
                 // },
-                Zone {
-                    low: 105_118.9,
-                    high: 105_240.10,
-                },
                 Zone {
                     low: 109_018.9,
                     high: 109_122.8,
