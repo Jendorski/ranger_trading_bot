@@ -43,10 +43,10 @@ impl Default for Zones {
     fn default() -> Self {
         Self {
             long_zones: vec![
-                // Zone {
-                //     low: 74_306.80,
-                //     high: 74_394.80,
-                // },
+                Zone {
+                    low: 74_306.80,
+                    high: 74_394.80,
+                },
                 // Zone {
                 //     low: 91_106.80,
                 //     high: 91_134.80,
@@ -175,10 +175,10 @@ impl Default for Zones {
                     low: 98_030.10,
                     high: 98_079.60,
                 },
-                // Zone {
-                //     low: 92_630.10,
-                //     high: 92_679.60,
-                // },
+                Zone {
+                    low: 92_630.10,
+                    high: 92_679.60,
+                },
                 Zone {
                     low: 89_906.80,
                     high: 90_008.60,
@@ -189,6 +189,93 @@ impl Default for Zones {
                 },
             ],
         }
+    }
+}
+
+impl Zones {
+    pub fn find_next_lower_long_zone(&self, current_price: f64) -> Option<&Zone> {
+        self.long_zones
+            .iter()
+            .filter(|z| z.high < current_price)
+            .max_by(|a, b| {
+                a.high
+                    .partial_cmp(&b.high)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    }
+
+    pub fn find_next_higher_short_zone(&self, current_price: f64) -> Option<&Zone> {
+        self.short_zones
+            .iter()
+            .filter(|z| z.low > current_price)
+            .min_by(|a, b| {
+                a.low
+                    .partial_cmp(&b.low)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_next_lower_long_zone() {
+        let zones = Zones {
+            long_zones: vec![
+                Zone {
+                    low: 100.0,
+                    high: 110.0,
+                },
+                Zone {
+                    low: 80.0,
+                    high: 90.0,
+                },
+            ],
+            short_zones: vec![],
+        };
+
+        // Price above all
+        let z = zones.find_next_lower_long_zone(120.0);
+        assert_eq!(z.unwrap().high, 110.0);
+
+        // Price between zones
+        let z = zones.find_next_lower_long_zone(95.0);
+        assert_eq!(z.unwrap().high, 90.0);
+
+        // Price below all
+        let z = zones.find_next_lower_long_zone(70.0);
+        assert!(z.is_none());
+    }
+
+    #[test]
+    fn test_find_next_higher_short_zone() {
+        let zones = Zones {
+            long_zones: vec![],
+            short_zones: vec![
+                Zone {
+                    low: 100.0,
+                    high: 110.0,
+                },
+                Zone {
+                    low: 120.0,
+                    high: 130.0,
+                },
+            ],
+        };
+
+        // Price below all
+        let z = zones.find_next_higher_short_zone(90.0);
+        assert_eq!(z.unwrap().low, 100.0);
+
+        // Price between zones
+        let z = zones.find_next_higher_short_zone(115.0);
+        assert_eq!(z.unwrap().low, 120.0);
+
+        // Price above all
+        let z = zones.find_next_higher_short_zone(140.0);
+        assert!(z.is_none());
     }
 }
 
@@ -489,6 +576,36 @@ impl<'a> Bot<'a> {
         }
 
         return margin;
+    }
+
+    /// Finds the Long Zone with the highest `high` that is strictly less than `current_price`.
+    pub fn find_next_lower_long_zone(&self, current_price: f64) -> Option<&Zone> {
+        self.zones.find_next_lower_long_zone(current_price)
+    }
+
+    /// Finds the Short Zone with the lowest `low` that is strictly greater than `current_price`.
+    pub fn find_next_higher_short_zone(&self, current_price: f64) -> Option<&Zone> {
+        self.zones.find_next_higher_short_zone(current_price)
+    }
+
+    /// Distance between the *nearest edges* of the two zones.
+    ///
+    /// For a short zone above a long zone this is simply:
+    ///
+    ///     short.low - long.high
+    ///
+    /// (the bottom of the short zone minus the top of the long zone).
+    pub fn price_gap_between_zones(short: &Zone, long: &Zone) -> f64 {
+        short.low - long.high
+    }
+
+    /// Difference between the **entry points** of the two positions.
+    ///
+    /// The short is entered at `short.high`; the long will be entered at `long.high`.
+    ///
+    ///     short.high - long.high
+    pub fn price_difference_entry_points(short: &Zone, long: &Zone) -> f64 {
+        short.high - long.high
     }
 
     pub async fn prepare_current_margin(&mut self, pnl: f64) -> f64 {
