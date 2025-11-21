@@ -50,7 +50,7 @@ impl Default for Zones {
                 },
                 Zone {
                     low: 85_001.80,
-                    high: 85_0002.80,
+                    high: 85_002.80,
                 },
                 // Zone {
                 //     low: 91_106.80,
