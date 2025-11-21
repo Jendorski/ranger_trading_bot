@@ -843,6 +843,14 @@ impl<'a> Bot<'a> {
     }
 
     async fn evaluate_long_partial_profit(&mut self, price: f64) -> Result<()> {
+        if self.partial_profit_target.len() == 0 {
+            info!(
+                "ALL TARGETS HIT FOR LONG!: {:?}",
+                self.partial_profit_target
+            );
+            self.pos = Position::Flat;
+        }
+
         let idx_opt = self
             .partial_profit_target
             .iter()
@@ -852,14 +860,6 @@ impl<'a> Bot<'a> {
 
         if idx == usize::MAX {
             return Ok(());
-        }
-
-        if self.partial_profit_target.len() == 0 {
-            info!(
-                "ALL TARGETS HIT FOR LONG!: {:?}",
-                self.partial_profit_target
-            );
-            self.pos = Position::Flat;
         }
 
         let target = self.partial_profit_target[idx].clone();
@@ -894,6 +894,14 @@ impl<'a> Bot<'a> {
     }
 
     async fn evaluate_short_partial_profit(&mut self, price: f64) -> Result<()> {
+        if self.partial_profit_target.len() == 0 {
+            info!(
+                "ALL TARGETS HIT FOR SHORT!: {:?}",
+                self.partial_profit_target
+            );
+            self.pos = Position::Flat;
+        }
+
         let idx_opt = self
             .partial_profit_target
             .iter()
@@ -903,14 +911,6 @@ impl<'a> Bot<'a> {
 
         if idx == usize::MAX {
             return Ok(());
-        }
-
-        if self.partial_profit_target.len() == 0 {
-            info!(
-                "ALL TARGETS HIT FOR SHORT!: {:?}",
-                self.partial_profit_target
-            );
-            self.pos = Position::Flat;
         }
 
         let target = self.partial_profit_target[idx].clone();
