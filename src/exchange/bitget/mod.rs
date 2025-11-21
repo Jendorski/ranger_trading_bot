@@ -37,9 +37,9 @@ pub fn parse_price_response(json: &str) -> Result<Vec<Prices>> {
         .data
         .into_iter()
         .map(|item| Prices {
-            price: item.price.parse().unwrap_or(0.0),
-            index_price: item.index_price.parse().unwrap_or(0.0),
-            mark_price: item.mark_price.parse().unwrap_or(0.0),
+            price: item.price.parse().unwrap_or(1.11),
+            index_price: item.index_price.parse().unwrap_or(1.11),
+            mark_price: item.mark_price.parse().unwrap_or(1.11),
         })
         .collect();
 

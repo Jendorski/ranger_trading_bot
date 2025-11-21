@@ -49,12 +49,12 @@ impl Exchange for HttpExchange {
         let bitget_data = bitget.text().await?;
 
         let prices: Result<Prices, String> =
-            bitget::get_prices(&bitget_data).ok_or_else(|| 0.00.to_string()); //"Failed to parse price data".into()
+            bitget::get_prices(&bitget_data).ok_or_else(|| 1.11.to_string()); //"Failed to parse price data".into()
 
         let exchange_price = prices.unwrap_or(Prices {
-            price: 0.00,
-            index_price: 0.00,
-            mark_price: 0.00,
+            price: 1.11,
+            index_price: 1.11,
+            mark_price: 1.11,
         }); //.unwrap();
 
         Ok(exchange_price.mark_price)
