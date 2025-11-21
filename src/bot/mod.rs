@@ -188,10 +188,10 @@ impl Default for Zones {
                     low: 89_906.80,
                     high: 90_008.60,
                 },
-                // Zone {
-                //     low: 84_906.80,
-                //     high: 85_098.60,
-                // },
+                Zone {
+                    low: 84_906.80,
+                    high: 85_098.60,
+                },
                 Zone {
                     low: 73_906.80,
                     high: 73_979.60,
