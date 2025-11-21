@@ -818,14 +818,12 @@ impl<'a> Bot<'a> {
         pos: Position,
     ) -> Result<()> {
         let price_difference = Self::determine_profit_difference(self, self.zone, pos);
-        info!("price_difference: {:?}", price_difference);
 
         let profit_count = 4.00;
         let mut ranger_price_difference = self.config.ranger_price_difference;
         if price_difference.is_finite() && price_difference != 0.00 {
             ranger_price_difference = price_difference.div(profit_count);
         }
-        info!("ranger_price_difference: {:?}", ranger_price_difference);
 
         let ppt = Helper::build_profit_targets(entry_price, ranger_price_difference, pos);
 
