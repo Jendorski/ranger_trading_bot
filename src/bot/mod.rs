@@ -854,6 +854,14 @@ impl<'a> Bot<'a> {
             return Ok(());
         }
 
+        if self.partial_profit_target.len() == 0 {
+            info!(
+                "ALL TARGETS HIT FOR LONG!: {:?}",
+                self.partial_profit_target
+            );
+            self.pos = Position::Flat;
+        }
+
         let target = self.partial_profit_target[idx].clone();
 
         if target.target_price == 0.00 || !target.target_price.is_finite() {
@@ -895,6 +903,14 @@ impl<'a> Bot<'a> {
 
         if idx == usize::MAX {
             return Ok(());
+        }
+
+        if self.partial_profit_target.len() == 0 {
+            info!(
+                "ALL TARGETS HIT FOR SHORT!: {:?}",
+                self.partial_profit_target
+            );
+            self.pos = Position::Flat;
         }
 
         let target = self.partial_profit_target[idx].clone();
