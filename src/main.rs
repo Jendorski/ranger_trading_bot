@@ -57,7 +57,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         match exchange.get_current_price().await {
             Ok(price) => {
                 info!("Price = {:.2}", price,);
-                if let Err(e) = bot.run_cycle(price, exchange.as_ref()).await {
+                if let Err(e) = //bot.test(price).await
+                    bot.run_cycle(price, exchange.as_ref()).await
+                {
                     eprintln!("Error during cycle: {e}");
                 }
             }

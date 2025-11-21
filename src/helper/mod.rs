@@ -235,7 +235,6 @@ impl Helper {
 
     pub fn build_profit_targets(
         entry_price: f64,
-        original_sl: f64,
         ranger_price_difference: f64,
         pos: Position,
     ) -> Vec<PartialProfitTarget> {

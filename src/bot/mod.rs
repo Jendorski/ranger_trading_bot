@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use log::{info, warn};
 use redis::{AsyncCommands, RedisError};
 use serde::{Deserialize, Serialize};
+use std::ops::Div;
 use std::result::Result::Ok;
 use uuid::Uuid;
 
@@ -46,6 +47,10 @@ impl Default for Zones {
                 Zone {
                     low: 74_306.80,
                     high: 74_394.80,
+                },
+                Zone {
+                    low: 85_001.80,
+                    high: 85_0002.80,
                 },
                 // Zone {
                 //     low: 91_106.80,
@@ -184,98 +189,15 @@ impl Default for Zones {
                     high: 90_008.60,
                 },
                 Zone {
+                    low: 84_806.80,
+                    high: 84_998.60,
+                },
+                Zone {
                     low: 73_906.80,
                     high: 73_979.60,
                 },
             ],
         }
-    }
-}
-
-impl Zones {
-    pub fn find_next_lower_long_zone(&self, current_price: f64) -> Option<&Zone> {
-        self.long_zones
-            .iter()
-            .filter(|z| z.high < current_price)
-            .max_by(|a, b| {
-                a.high
-                    .partial_cmp(&b.high)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-    }
-
-    pub fn find_next_higher_short_zone(&self, current_price: f64) -> Option<&Zone> {
-        self.short_zones
-            .iter()
-            .filter(|z| z.low > current_price)
-            .min_by(|a, b| {
-                a.low
-                    .partial_cmp(&b.low)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_find_next_lower_long_zone() {
-        let zones = Zones {
-            long_zones: vec![
-                Zone {
-                    low: 100.0,
-                    high: 110.0,
-                },
-                Zone {
-                    low: 80.0,
-                    high: 90.0,
-                },
-            ],
-            short_zones: vec![],
-        };
-
-        // Price above all
-        let z = zones.find_next_lower_long_zone(120.0);
-        assert_eq!(z.unwrap().high, 110.0);
-
-        // Price between zones
-        let z = zones.find_next_lower_long_zone(95.0);
-        assert_eq!(z.unwrap().high, 90.0);
-
-        // Price below all
-        let z = zones.find_next_lower_long_zone(70.0);
-        assert!(z.is_none());
-    }
-
-    #[test]
-    fn test_find_next_higher_short_zone() {
-        let zones = Zones {
-            long_zones: vec![],
-            short_zones: vec![
-                Zone {
-                    low: 100.0,
-                    high: 110.0,
-                },
-                Zone {
-                    low: 120.0,
-                    high: 130.0,
-                },
-            ],
-        };
-
-        // Price below all
-        let z = zones.find_next_higher_short_zone(90.0);
-        assert_eq!(z.unwrap().low, 100.0);
-
-        // Price between zones
-        let z = zones.find_next_higher_short_zone(115.0);
-        assert_eq!(z.unwrap().low, 120.0);
-
-        // Price above all
-        let z = zones.find_next_higher_short_zone(140.0);
-        assert!(z.is_none());
     }
 }
 
@@ -388,6 +310,8 @@ pub struct Bot<'a> {
 
     pub zones: Zones,
 
+    pub default_zone: Zone,
+
     // a *mutable* reference to the redis connection
     redis_conn: redis::aio::MultiplexedConnection,
 
@@ -396,6 +320,8 @@ pub struct Bot<'a> {
     current_margin: f64,
 
     partial_profit_target: Vec<PartialProfitTarget>,
+
+    pub zone: Zone,
 }
 
 impl<'a> Bot<'a> {
@@ -421,6 +347,11 @@ impl<'a> Bot<'a> {
             .await
             .unwrap_or_else(|_| [].to_vec());
 
+        let default_zone = Zone {
+            high: 0.00,
+            low: 0.00,
+        };
+
         Ok(Self {
             pos,
             zones,
@@ -429,6 +360,8 @@ impl<'a> Bot<'a> {
             config,
             current_margin,
             partial_profit_target,
+            default_zone,
+            zone: default_zone,
         })
     }
 
@@ -576,36 +509,6 @@ impl<'a> Bot<'a> {
         }
 
         return margin;
-    }
-
-    /// Finds the Long Zone with the highest `high` that is strictly less than `current_price`.
-    pub fn find_next_lower_long_zone(&self, current_price: f64) -> Option<&Zone> {
-        self.zones.find_next_lower_long_zone(current_price)
-    }
-
-    /// Finds the Short Zone with the lowest `low` that is strictly greater than `current_price`.
-    pub fn find_next_higher_short_zone(&self, current_price: f64) -> Option<&Zone> {
-        self.zones.find_next_higher_short_zone(current_price)
-    }
-
-    /// Distance between the *nearest edges* of the two zones.
-    ///
-    /// For a short zone above a long zone this is simply:
-    ///
-    ///     short.low - long.high
-    ///
-    /// (the bottom of the short zone minus the top of the long zone).
-    pub fn price_gap_between_zones(short: &Zone, long: &Zone) -> f64 {
-        short.low - long.high
-    }
-
-    /// Difference between the **entry points** of the two positions.
-    ///
-    /// The short is entered at `short.high`; the long will be entered at `long.high`.
-    ///
-    ///     short.high - long.high
-    pub fn price_difference_entry_points(short: &Zone, long: &Zone) -> f64 {
-        short.high - long.high
     }
 
     pub async fn prepare_current_margin(&mut self, pnl: f64) -> f64 {
@@ -867,17 +770,65 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
+    fn determine_profit_difference(&mut self, zone: Zone, pos: Position) -> f64 {
+        let mut the_zone = self.default_zone;
+
+        if pos == Position::Long {
+            //Find the next short zone to get the profit difference from and long from
+            the_zone = *self
+                .zones
+                .short_zones
+                .iter()
+                .filter(|lz| lz.high <= zone.low)
+                // must be lower than the short zone
+                .max_by(|a, b| a.high.partial_cmp(&b.high).unwrap())
+                .unwrap_or(&Zone {
+                    high: 0.00,
+                    low: 0.00,
+                });
+            info!("LONG: the_zone: {:?}, zone: {:?}", the_zone, zone);
+
+            return zone.high - the_zone.high;
+        }
+
+        if pos == Position::Short {
+            //Find the next long zone to get the profit difference from and long from
+            the_zone = *self
+                .zones
+                .long_zones
+                .iter()
+                .filter(|lz| lz.high <= zone.low)
+                // must be lower than the long zone
+                .max_by(|a, b| a.high.partial_cmp(&b.high).unwrap())
+                .unwrap_or(&Zone {
+                    high: 0.00,
+                    low: 0.00,
+                });
+            info!("SHORT: the_zone: {:?}, zone: {:?}", the_zone, zone);
+
+            return zone.high - the_zone.high;
+        }
+
+        return 0.00;
+    }
+
     async fn store_partial_profit_targets(
         &mut self,
         entry_price: f64,
         pos: Position,
     ) -> Result<()> {
-        let ppt = Helper::build_profit_targets(
-            entry_price,
-            self.open_pos.sl.unwrap(),
-            self.config.ranger_price_difference,
-            pos,
-        );
+        let price_difference = Self::determine_profit_difference(self, self.zone, pos);
+        info!("price_difference: {:?}", price_difference);
+
+        let profit_count = 4.00;
+        let mut ranger_price_difference = self.config.ranger_price_difference;
+        if price_difference.is_finite() && price_difference != 0.00 {
+            ranger_price_difference = price_difference.div(profit_count);
+        }
+        info!("ranger_price_difference: {:?}", ranger_price_difference);
+
+        let ppt = Helper::build_profit_targets(entry_price, ranger_price_difference, pos);
+
         self.partial_profit_target = ppt.clone();
 
         let _: () = self
@@ -976,13 +927,16 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
-    pub async fn run_cycle(
-        &mut self,
-        price: f64,
-        exchange: &dyn Exchange,
-        //config: &mut Config,
-    ) -> Result<()> {
-        // info!("Price = {:.2} | State = {:?}", price, self.pos);
+    pub async fn test(&mut self, price: f64) -> Result<()> {
+        self.zone = Zone {
+            high: 85_000.34,
+            low: 84_899.87,
+        };
+        let _: Result<()> = Self::store_partial_profit_targets(self, price, Position::Short).await;
+        Ok(())
+    }
+
+    pub async fn run_cycle(&mut self, price: f64, exchange: &dyn Exchange) -> Result<()> {
         warn!("Ranger State = {:?}", self.pos);
 
         let size = Helper::contract_amount(price, self.current_margin, self.config.leverage);
@@ -1006,6 +960,13 @@ impl<'a> Bot<'a> {
                         self.config.ranger_risk_pct,
                     );
 
+                    self.zone = *self
+                        .zones
+                        .long_zones
+                        .iter()
+                        .find(|z| z.contains(price))
+                        .unwrap_or(&self.default_zone);
+
                     let _: Result<()> =
                         Self::store_partial_profit_targets(self, price, self.pos).await;
                 } else if self.zones.short_zones.iter().any(|z| z.contains(price)) {
@@ -1026,6 +987,12 @@ impl<'a> Bot<'a> {
                         self.config.ranger_risk_pct,
                     );
 
+                    self.zone = *self
+                        .zones
+                        .short_zones
+                        .iter()
+                        .find(|z| z.contains(price))
+                        .unwrap_or(&self.default_zone);
                     let _: Result<()> =
                         Self::store_partial_profit_targets(self, price, self.pos).await;
                 } else {
