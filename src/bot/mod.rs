@@ -56,6 +56,10 @@ impl Default for Zones {
                 //     low: 85_301.80,
                 //     high: 85_402.80,
                 // },
+                Zone {
+                    low: 89_301.80,
+                    high: 89_402.80,
+                },
                 // Zone {
                 //     low: 91_106.80,
                 //     high: 91_134.80,
@@ -188,10 +192,10 @@ impl Default for Zones {
                     low: 92_630.10,
                     high: 92_679.60,
                 },
-                Zone {
-                    low: 89_906.80,
-                    high: 90_008.60,
-                },
+                // Zone {
+                //     low: 89_906.80,
+                //     high: 90_008.60,
+                // },
                 Zone {
                     low: 84_906.80,
                     high: 85_098.60,
@@ -790,7 +794,6 @@ impl<'a> Bot<'a> {
                     high: 0.00,
                     low: 0.00,
                 });
-            info!("LONG: the_zone: {:?}, zone: {:?}", the_zone, zone);
 
             return zone.high - the_zone.high;
         }
@@ -808,7 +811,6 @@ impl<'a> Bot<'a> {
                     high: 0.00,
                     low: 0.00,
                 });
-            info!("SHORT: the_zone: {:?}, zone: {:?}", the_zone, zone);
 
             return zone.high - the_zone.high;
         }
