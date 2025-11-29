@@ -52,14 +52,14 @@ impl Default for Zones {
                     low: 79_981.80,
                     high: 80_102.80,
                 },
-                // Zone {
-                //     low: 85_301.80,
-                //     high: 85_402.80,
-                // },
                 Zone {
-                    low: 89_301.80,
-                    high: 89_402.80,
+                    low: 85_301.80,
+                    high: 85_402.80,
                 },
+                // Zone {
+                //     low: 89_301.80,
+                //     high: 89_402.80,
+                // },
                 // Zone {
                 //     low: 91_106.80,
                 //     high: 91_134.80,
@@ -188,6 +188,7 @@ impl Default for Zones {
                     low: 98_030.10,
                     high: 98_079.60,
                 },
+                //Maybe another zone for the 94k resistance.
                 Zone {
                     low: 92_630.10,
                     high: 92_679.60,
