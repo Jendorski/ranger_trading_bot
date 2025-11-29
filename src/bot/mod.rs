@@ -957,6 +957,10 @@ impl<'a> Bot<'a> {
     }
 
     pub async fn run_cycle(&mut self, price: f64, exchange: &dyn Exchange) -> Result<()> {
+        if price == 1.11 {
+            warn!("Price failure! -> {:?}", price);
+            return Ok(());
+        }
         warn!("Ranger State = {:?}", self.pos);
 
         let size = Helper::contract_amount(price, self.current_margin, self.config.leverage);
