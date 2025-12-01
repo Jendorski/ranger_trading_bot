@@ -2,10 +2,12 @@ use std::sync::Arc;
 use std::{error::Error, time::Duration};
 
 use log::{info, warn};
+use redis::aio::MultiplexedConnection;
 use tokio::time;
 
 use crate::cache::RedisClient;
 use crate::config::Config;
+use crate::exchange::bitget::{CandleData, HttpCandleData};
 use crate::exchange::{Exchange, HttpExchange};
 use crate::graph::Graph;
 use crate::helper::Helper;
@@ -16,6 +18,43 @@ mod config;
 mod exchange;
 mod graph;
 mod helper;
+//mod trackers;
+
+async fn run_bot(
+    redis_conn: &mut MultiplexedConnection,
+    bot: &mut bot::Bot<'_>,
+    exchange: Arc<HttpExchange>,
+    cfg: Config,
+) -> Result<(), Box<dyn Error>> {
+    let mut graph = graph::Graph::new();
+
+    // 4️⃣ Poll loop
+    let mut interval = time::interval(Duration::from_secs(cfg.poll_interval_secs));
+
+    Graph::prepare_cumulative_weekly_monthly(&mut graph, redis_conn.clone()).await?;
+
+    loop {
+        interval.tick().await;
+
+        match exchange.get_current_price().await {
+            Ok(price) => {
+                info!("Price = {:.2}", price,);
+                if let Err(e) = //bot.test(price).await
+                    bot.run_cycle(price, exchange.as_ref()).await
+                {
+                    eprintln!("Error during cycle: {e}");
+                }
+            }
+            Err(err) => eprintln!("Failed to fetch price: {err}"),
+        }
+
+        if Helper::is_midnight() {
+            warn!("It's midnight now!");
+            Graph::prepare_cumulative_weekly_monthly(&mut graph, redis_conn.clone()).await?;
+        }
+    }
+    //Ok(())
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -39,6 +78,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         client: reqwest::Client::new(),
         symbol: cfg.symbol.clone(),
     });
+
+    //TODO: Add & Test momentum tracker
+    // let _: () = trackers::momentum::run_momentum_tracker().await?;
 
     // 3️⃣ Bot state
     let mut bot = bot::Bot::new(redis_conn.clone(), &cfg).await?;

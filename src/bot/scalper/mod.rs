@@ -322,7 +322,7 @@ impl ScalperBot {
                     self.scalp_pos = Position::Flat;
                 }
 
-                let config_diff = config.scalp_price_difference;
+                let config_diff = 500.00;
                 let min_config_diff = config_diff - 100.00;
                 let diff = Helper::calc_price_difference(
                     self.scalp_open_pos.entry_price,
@@ -367,7 +367,7 @@ impl ScalperBot {
                 }
 
                 //Operation scalp, if set
-                let config_diff = config.scalp_price_difference;
+                let config_diff = 500.00;
                 let min_config_diff = config_diff - 100.00;
                 let diff = Helper::calc_price_difference(
                     self.scalp_open_pos.entry_price,

@@ -44,7 +44,6 @@ impl Exchange for HttpExchange {
             .get(format!("https://api.bitget.com/api/v2/mix/market/symbol-price?productType=usdt-futures&symbol={}", self.symbol))
             .send()
             .await?;
-        // info!("bitget -> {:?}", bitget);
 
         let bitget_data = bitget.text().await?;
 

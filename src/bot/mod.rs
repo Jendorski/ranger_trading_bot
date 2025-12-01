@@ -16,7 +16,7 @@ use crate::helper::{
     TRADING_BOT_POSITION, TRADING_BOT_ZONES, TRADING_CAPITAL,
 };
 
-//pub mod scalper;
+pub mod scalper;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Zone {
@@ -193,13 +193,17 @@ impl Default for Zones {
                     low: 92_630.10,
                     high: 92_679.60,
                 },
-                // Zone {
-                //     low: 89_906.80,
-                //     high: 90_008.60,
-                // },
+                Zone {
+                    low: 89_906.80,
+                    high: 90_008.60,
+                },
                 Zone {
                     low: 84_906.80,
                     high: 85_098.60,
+                },
+                Zone {
+                    low: 79_806.80,
+                    high: 80_098.60,
                 },
                 Zone {
                     low: 73_906.80,
