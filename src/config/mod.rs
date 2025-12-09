@@ -10,6 +10,7 @@ pub struct Config {
     /// API key / secret pair for your broker
     pub api_key: String,
     pub api_secret: String,
+    pub passphrase: String,
 
     /// Trading symbol (e.g. BTCUSDT)
     pub symbol: String,
@@ -30,7 +31,7 @@ pub struct Config {
 
     // pub scalp_price_difference: f64,
     pub ranger_price_difference: f64,
-    pub profit_factor: f64,
+    //pub profit_factor: f64,
 }
 
 fn default_interval() -> u64 {
@@ -45,6 +46,8 @@ impl Config {
         let api_key = env::var("API_KEY").map_err(|_| anyhow!("Missing API_KEY"))?;
 
         let api_secret = env::var("API_SECRET").map_err(|_| anyhow!("Missing API_SECRET"))?;
+        let passphrase =
+            env::var("ACCESS_PASSPHRASE").map_err(|_| anyhow!("Missing ACCESS_PASSPHRASE"))?;
 
         let symbol = env::var("SYMBOL").unwrap_or_else(|_| "BTCUSDT".into());
 
@@ -80,10 +83,10 @@ impl Config {
             .and_then(|v| v.parse::<f64>().ok())
             .unwrap_or(1750.0);
 
-        let profit_factor = env::var("PARTIAL_PROFIT_FACTOR")
-            .ok()
-            .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(400.0);
+        // let profit_factor = env::var("PARTIAL_PROFIT_FACTOR")
+        //     .ok()
+        //     .and_then(|v| v.parse::<f64>().ok())
+        //     .unwrap_or(400.0);
 
         let ranger_risk_pct = env::var("RANGER_RISK_PERCENTAGE")
             .ok()
@@ -93,6 +96,7 @@ impl Config {
         Ok(Config {
             api_key,
             api_secret,
+            passphrase,
             symbol,
             poll_interval_secs,
             redis_url,
@@ -102,7 +106,7 @@ impl Config {
             ranger_risk_pct,
             // scalp_price_difference,
             ranger_price_difference,
-            profit_factor,
+            //profit_factor,
         })
     }
 }

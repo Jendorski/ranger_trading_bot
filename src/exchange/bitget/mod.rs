@@ -1,17 +1,26 @@
+use std::collections::HashMap;
+
 use anyhow::{Ok, Result};
 use async_trait::async_trait;
+use chrono::Utc;
 use log::info;
+use reqwest::header::HeaderMap;
 use serde::{Deserialize, Serialize};
+
+use crate::{
+    bot::{OpenPosition, Position},
+    config::Config,
+};
 
 //For binance: https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=5m&limit=100
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ApiResponse {
+pub struct ApiResponse<T> {
     pub code: String,
     pub msg: String,
     #[serde(rename = "requestTime")]
     pub request_time: i64,
-    pub data: Vec<Candle>,
+    pub data: T,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -30,6 +39,74 @@ pub struct Candle {
     pub volume: f64,
     #[serde(deserialize_with = "deserialize_string_to_f64")]
     pub quote_volume: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PlaceOrderData {
+    #[serde(rename = "clientOid")]
+    pub client_oid: String,
+    #[serde(rename = "orderId")]
+    pub order_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OrderDetail {
+    pub symbol: String,
+    pub size: String,
+    #[serde(rename = "orderId")]
+    pub order_id: String,
+    #[serde(rename = "clientOid")]
+    pub client_oid: String,
+    #[serde(rename = "baseVolume")]
+    pub base_volume: String,
+    #[serde(rename = "priceAvg")]
+    pub price_avg: String,
+    pub fee: String,
+    pub price: String,
+    pub state: String,
+    pub side: String,
+    pub force: String,
+    #[serde(rename = "totalProfits")]
+    pub total_profits: String,
+    #[serde(rename = "posSide")]
+    pub pos_side: String,
+    #[serde(rename = "marginCoin")]
+    pub margin_coin: String,
+    #[serde(rename = "presetStopSurplusPrice")]
+    pub preset_stop_surplus_price: String,
+    #[serde(rename = "presetStopSurplusType")]
+    pub preset_stop_surplus_type: String,
+    #[serde(rename = "presetStopSurplusExecutePrice")]
+    pub preset_stop_surplus_execute_price: String,
+    #[serde(rename = "presetStopLossPrice")]
+    pub preset_stop_loss_price: String,
+    #[serde(rename = "presetStopLossType")]
+    pub preset_stop_loss_type: String,
+    #[serde(rename = "presetStopLossExecutePrice")]
+    pub preset_stop_loss_execute_price: String,
+    #[serde(rename = "quoteVolume")]
+    pub quote_volume: String,
+    #[serde(rename = "orderType")]
+    pub order_type: String,
+    pub leverage: String,
+    #[serde(rename = "marginMode")]
+    pub margin_mode: String,
+    #[serde(rename = "reduceOnly")]
+    pub reduce_only: String,
+    #[serde(rename = "enterPointSource")]
+    pub enter_point_source: String,
+    #[serde(rename = "tradeSide")]
+    pub trade_side: String,
+    #[serde(rename = "posMode")]
+    pub pos_mode: String,
+    #[serde(rename = "orderSource")]
+    pub order_source: String,
+    #[serde(rename = "cancelReason")]
+    pub cancel_reason: String,
+    #[serde(rename = "cTime")]
+    pub c_time: String,
+    #[serde(rename = "uTime")]
+    pub u_time: String,
 }
 
 // Custom deserializers for string-to-number conversion
@@ -55,6 +132,23 @@ pub trait CandleData: Send + Sync {
     async fn get_bitget_candles(&self, interval: String) -> Result<Vec<Candle>>;
 }
 
+//#[async_trait]
+pub trait FuturesCall {
+    fn new() -> Self;
+
+    /// Return the latest candles
+    async fn new_futures_call(&self, open_position: OpenPosition) -> Result<PlaceOrderData>;
+
+    fn return_bitget_headers(&self) -> Result<HeaderMap>;
+
+    fn return_bitget_request_body(
+        &self,
+        open_position: OpenPosition,
+    ) -> Result<HashMap<std::string::String, std::string::String>>;
+
+    async fn modify_futures_order(&self, open_position: OpenPosition) -> Result<PlaceOrderData>;
+}
+
 /// Simple HTTP‑based mock of the `Exchange` trait – replace with your real SDK.
 ///
 /// In this example we hit a public ticker endpoint (e.g. Binance).
@@ -75,7 +169,7 @@ impl CandleData for HttpCandleData {
 
         let bit_text = bitget.text().await?;
 
-        let response: ApiResponse = serde_json::from_str(&bit_text).unwrap();
+        let response: ApiResponse<Vec<Candle>> = serde_json::from_str(&bit_text).unwrap();
         assert_eq!(response.code, "00000");
         assert_eq!(response.msg, "success");
         assert_eq!(response.data.len(), 100);
@@ -83,6 +177,160 @@ impl CandleData for HttpCandleData {
         let candles = response.data;
 
         Ok(candles)
+    }
+}
+
+//#[async_trait::async_trait]
+impl FuturesCall for HttpCandleData {
+    fn new() -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            symbol: String::new(),
+        }
+    }
+
+    fn return_bitget_request_body(
+        &self,
+        open_position: OpenPosition,
+    ) -> Result<HashMap<std::string::String, std::string::String>> {
+        let mut side: &str = "buy";
+
+        let pos_size = open_position.position_size.to_string();
+
+        let entry_price = open_position.entry_price.to_string();
+
+        let client_order_id = open_position.id.to_string();
+
+        let preset_stop_loss_price = open_position.sl.unwrap().to_string();
+
+        let preset_take_profit_price = open_position.tp.unwrap().to_string();
+
+        if open_position.pos == Position::Long {
+            side = "buy";
+        }
+
+        if open_position.pos == Position::Short {
+            side = "sell";
+        }
+
+        let mut req_body: HashMap<String, String> = HashMap::<String, String>::new();
+
+        req_body.insert(String::from("symbol"), String::from("BTCUSDT"));
+        req_body.insert(String::from("side"), String::from(side));
+        req_body.insert(String::from("orderType"), String::from("limit"));
+        req_body.insert(String::from("size"), String::from(&pos_size));
+        req_body.insert(String::from("price"), String::from(&entry_price));
+        req_body.insert(String::from("timeInForce"), String::from("goodTillCancel"));
+        req_body.insert(String::from("marginMode"), String::from("isolated"));
+        req_body.insert(String::from("productType"), String::from("USDT-FUTURES"));
+        req_body.insert(String::from("marginCoin"), String::from("USDT"));
+        req_body.insert(String::from("clientOid"), String::from(&client_order_id));
+
+        Ok(req_body)
+    }
+
+    async fn modify_futures_order(&self, open_position: OpenPosition) -> Result<PlaceOrderData> {
+        let headers = self.return_bitget_headers()?;
+
+        let mut req_body = self.return_bitget_request_body(open_position)?;
+
+        let preset_stop_loss_price = open_position.sl.unwrap().to_string();
+
+        let preset_take_profit_price = open_position.tp.unwrap().to_string();
+
+        let new_size = open_position.position_size.to_string();
+
+        req_body.remove("size");
+
+        req_body.insert(String::from("newSize"), String::from(&new_size));
+        req_body.insert(
+            String::from("newPresetStopSurplusPrice"),
+            String::from(&preset_take_profit_price),
+        );
+        req_body.insert(
+            String::from("newPresetStopLossPrice"),
+            String::from(&preset_stop_loss_price),
+        );
+
+        let url = format!("https://api.bitget.com/api/v2/mix/order/modify-order");
+        info!("url: {:?}", url);
+
+        let bitget = self
+            .client
+            .post(url)
+            .headers(headers)
+            .json(&req_body)
+            .send()
+            .await?;
+
+        let bit_text = bitget.text().await?;
+        info!("bit_text::modify_futures_order -> {:?}", bit_text);
+
+        let response: ApiResponse<PlaceOrderData> = serde_json::from_str(&bit_text).unwrap();
+        info!("response::modify_futures_order -> {:?}", response);
+        assert_eq!(response.code, "00000");
+        assert_eq!(response.msg, "success");
+
+        let order_data = response.data;
+
+        Ok(order_data)
+    }
+
+    fn return_bitget_headers(&self) -> Result<HeaderMap> {
+        let mut headers = HeaderMap::new();
+
+        let config = Config::from_env()?;
+
+        headers.insert("ACCESS-KEY", config.api_key.parse().unwrap());
+        headers.insert("ACCESS-SIGN", config.api_secret.parse().unwrap());
+        headers.insert("ACCESS-PASSPHRASE", config.passphrase.parse().unwrap());
+        headers.insert(
+            "ACCESS-TIMESTAMP",
+            Utc::now().timestamp().to_string().parse().unwrap(),
+        );
+        headers.insert("locale", "english".parse().unwrap());
+
+        Ok(headers)
+    }
+
+    async fn new_futures_call(&self, open_position: OpenPosition) -> Result<PlaceOrderData> {
+        let url = format!("https://api.bitget.com/api/v2/mix/order/place-order");
+        info!("url: {:?}", url);
+
+        let preset_stop_surplus_price = open_position.tp.unwrap().to_string();
+        let preset_stop_loss_price = open_position.sl.unwrap().to_string();
+
+        let mut req_body = self.return_bitget_request_body(open_position)?;
+
+        req_body.insert(
+            String::from("presetStopSurplusPrice"),
+            String::from(&preset_stop_surplus_price),
+        );
+        req_body.insert(
+            String::from("presetStopLossPrice"),
+            String::from(&preset_stop_loss_price),
+        );
+
+        let headers = self.return_bitget_headers()?;
+        let bitget = self
+            .client
+            .post(url)
+            .form(&req_body)
+            .headers(headers)
+            .send()
+            .await?;
+
+        let bit_text = bitget.text().await?;
+        info!("bit_text::new_futures_call -> {:?}", bit_text);
+
+        let response: ApiResponse<PlaceOrderData> = serde_json::from_str(&bit_text).unwrap();
+        info!("response::new_futures_call -> {:?}", response);
+        assert_eq!(response.code, "00000");
+        assert_eq!(response.msg, "success");
+
+        let order = response.data;
+
+        Ok(order)
     }
 }
 

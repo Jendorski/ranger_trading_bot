@@ -121,7 +121,7 @@ impl Graph {
                 let pnl_percent = Helper::pnl_percent(
                     pos.entry_price,
                     pos.exit_price,
-                    pos.leverage.unwrap_or(self.config.leverage),
+                    //pos.leverage.unwrap_or(self.config.leverage),
                     pos.position.unwrap_or(bot::Position::Flat),
                 );
                 map.entry(key).or_default().push(pnl_percent);
@@ -143,7 +143,7 @@ impl Graph {
                 let pnl_percent = Helper::pnl_percent(
                     pos.entry_price,
                     pos.exit_price,
-                    pos.leverage.unwrap_or(self.config.leverage),
+                    //pos.leverage.unwrap_or(self.config.leverage),
                     pos.position.unwrap_or(bot::Position::Flat),
                 );
                 map.entry(key).or_default().push(pnl_percent);

@@ -1,11 +1,10 @@
 use crate::{bot::Position, config::Config};
 use chrono::{Local, Timelike};
-use log::info;
 use std::fmt;
 
-pub const TRADING_SCALPER_BOT_ACTIVE: &str = "trading_scalper_bot::active";
-pub const TRADIN_SCALPER_BOT_POSITION: &str = "trading_scalper_bot::position";
-pub const SCALPER_CLOSED_POSITIONS: &str = "scalper_closed_positions";
+// pub const TRADING_SCALPER_BOT_ACTIVE: &str = "trading_scalper_bot::active";
+// pub const TRADIN_SCALPER_BOT_POSITION: &str = "trading_scalper_bot::position";
+// pub const SCALPER_CLOSED_POSITIONS: &str = "scalper_closed_positions";
 pub const TRADING_BOT_ZONES: &str = "trading_bot:zones";
 pub const TRADING_BOT_POSITION: &str = "trading_bot:position";
 pub const TRADING_BOT_ACTIVE: &str = "trading::active";
@@ -124,7 +123,7 @@ impl Helper {
     }
 
     /// Percentage PnL of a single trade
-    pub fn pnl_percent(entry: f64, exit: f64, leverage: f64, pos: Position) -> f64 {
+    pub fn pnl_percent(entry: f64, exit: f64, pos: Position) -> f64 {
         if !entry.is_finite() || !exit.is_finite() {
             return 0.00;
         }
@@ -145,7 +144,7 @@ impl Helper {
         }
 
         if pos == Position::Flat {
-            pl = 0.00;
+            //pl = 0.00;
             pl_diff = 0.00
         }
 
@@ -175,20 +174,6 @@ impl Helper {
         }
 
         0.00
-    }
-
-    pub fn calc_price_difference(entry_price: f64, current_price: f64, pos: Position) -> f64 {
-        if entry_price.is_finite() && current_price.is_finite() {
-            if pos == Position::Long {
-                return current_price - entry_price;
-            }
-
-            if pos == Position::Short {
-                return entry_price - current_price;
-            }
-        }
-
-        return 0.00;
     }
 
     //Function to trigger Stop Loss
