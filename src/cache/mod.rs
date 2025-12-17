@@ -14,7 +14,7 @@ impl RedisClient {
     }
 
     #[inline]
-    pub fn get_conn(&mut self) -> &mut MultiplexedConnection {
-        &mut self.conn
+    pub fn get_multiplexed_connection(&self) -> MultiplexedConnection {
+        self.conn.clone()
     }
 }

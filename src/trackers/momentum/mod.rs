@@ -514,8 +514,9 @@ pub async fn run_momentum_tracker() -> Result<(), anyhow::Error> {
         client: reqwest::Client::new(),
         symbol: String::from("BTCUSDT"),
     });
-    let res: Result<Vec<Candle>, anyhow::Error> =
-        candle_data.get_bitget_candles(String::from("15m")).await;
+    let res: Result<Vec<Candle>, anyhow::Error> = candle_data
+        .get_bitget_candles(String::from("15m"), String::from("100"))
+        .await;
 
     let candle_data = res.unwrap_or_else(|_| Vec::new());
     if candle_data.len() == 0 {

@@ -5,7 +5,7 @@ use std::env;
 
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Config {
     /// API key / secret pair for your broker
     pub api_key: String,
@@ -32,6 +32,8 @@ pub struct Config {
     // pub scalp_price_difference: f64,
     pub ranger_price_difference: f64,
     //pub profit_factor: f64,
+    pub smc_timeframe: String,
+    pub smc_candle_count: String,
 }
 
 fn default_interval() -> u64 {
@@ -54,7 +56,7 @@ impl Config {
         let poll_interval_secs: u64 = env::var("POLL_INTERVAL_SECS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(5);
+            .unwrap_or(3);
 
         let redis_url = env::var("REDIS_URL").map_err(|_| anyhow!("Missing REDIS_URL"))?;
 
@@ -91,7 +93,11 @@ impl Config {
         let ranger_risk_pct = env::var("RANGER_RISK_PERCENTAGE")
             .ok()
             .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(0.15); //15%
+            .unwrap_or(0.075); //7.5%
+
+        //15m, 333 seems to be great for ranging on the small TF... would need consistency though
+        let smc_timeframe = env::var("SMC_TIMEFRAME").unwrap_or_else(|_| "4H".into()); //15m 4H
+        let smc_candle_count = env::var("SMC_CANDLE_COUNT").unwrap_or_else(|_| "150".into()); //150 333 1000
 
         Ok(Config {
             api_key,
@@ -107,6 +113,8 @@ impl Config {
             // scalp_price_difference,
             ranger_price_difference,
             //profit_factor,
+            smc_timeframe,
+            smc_candle_count,
         })
     }
 }

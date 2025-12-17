@@ -11,12 +11,6 @@ use crate::exchange::bitget::Prices;
 
 pub mod bitget;
 
-#[derive(Debug, Clone, Copy)]
-pub enum OrderSide {
-    Buy,
-    Sell,
-}
-
 #[async_trait]
 pub trait Exchange: Send + Sync {
     /// Return the latest spot price for the configured symbol.
@@ -92,11 +86,11 @@ impl Exchange for HttpExchange {
         open_position: OpenPosition,
     ) -> Result<PlaceOrderData, anyhow::Error> {
         // For demo purposes we just log and pretend the order filled at current price.
-        let price = self.get_current_price().await?;
-        info!(
-            "Mock market {:?} for {:.6} {} at {price:.2}",
-            open_position.pos, open_position.entry_price, self.symbol
-        );
+        // let price = self.get_current_price().await?;
+        // info!(
+        //     "Mock market {:?} for {:.6} {} at {price:.2}",
+        //     open_position.pos, open_position.entry_price, self.symbol
+        // );
         let new_bitget_futures = <HttpCandleData as bitget::FuturesCall>::new();
         let execute_call = new_bitget_futures.new_futures_call(open_position).await?;
         Ok(execute_call)

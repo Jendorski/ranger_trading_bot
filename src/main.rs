@@ -7,7 +7,6 @@ use tokio::time;
 
 use crate::cache::RedisClient;
 use crate::config::Config;
-use crate::exchange::bitget::{CandleData, HttpCandleData};
 use crate::exchange::{Exchange, HttpExchange};
 use crate::graph::Graph;
 use crate::helper::Helper;
@@ -18,7 +17,7 @@ mod config;
 mod exchange;
 mod graph;
 mod helper;
-//mod trackers;
+mod trackers;
 
 async fn run_bot(
     redis_conn: &mut MultiplexedConnection,
@@ -31,15 +30,13 @@ async fn run_bot(
     // 4️⃣ Poll loop
     let mut interval = time::interval(Duration::from_secs(cfg.poll_interval_secs));
 
-    Graph::prepare_cumulative_weekly_monthly(&mut graph, redis_conn.clone()).await?;
-
     loop {
         interval.tick().await;
 
         match exchange.get_current_price().await {
             Ok(price) => {
                 info!("Price = {:.2}", price,);
-                if let Err(e) = //bot.test(price).await
+                if let Err(e) = //bot.test().await
                     bot.run_cycle(price, exchange.as_ref()).await
                 {
                     eprintln!("Error during cycle: {e}");
@@ -53,7 +50,6 @@ async fn run_bot(
             Graph::prepare_cumulative_weekly_monthly(&mut graph, redis_conn.clone()).await?;
         }
     }
-    //Ok(())
 }
 
 #[tokio::main]
@@ -68,10 +64,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // 1️⃣ Load config
     let cfg = Config::from_env()?;
-    //info!("Loaded config: {:?}", cfg);
+    let config_clone = cfg.clone();
 
-    let mut binding = RedisClient::connect(&cfg.redis_url).await?;
-    let redis_conn = binding.get_conn();
+    let binding = RedisClient::connect(&cfg.redis_url).await?;
+    let redis_conn = binding.get_multiplexed_connection();
 
     // 2️⃣ Create exchange instance (replace with real SDK in production)
     let exchange = Arc::new(HttpExchange {
@@ -79,38 +75,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
         symbol: cfg.symbol.clone(),
     });
 
-    //TODO: Add & Test momentum tracker
-    // let _: () = trackers::momentum::run_momentum_tracker().await?;
-
     // 3️⃣ Bot state
     let mut bot = bot::Bot::new(redis_conn.clone(), &cfg).await?;
     // let mut scalper = bot::scalper::ScalperBot::new(redis_conn.clone()).await?;
 
-    let mut graph = graph::Graph::new();
+    let smc_conn = redis_conn.clone();
+    let smc_config = cfg.clone();
+    let _smc_handle = tokio::spawn(async move {
+        trackers::smart_money_concepts::smc_loop(smc_conn, smc_config).await;
+    });
 
-    // 4️⃣ Poll loop
-    let mut interval = time::interval(Duration::from_secs(cfg.poll_interval_secs));
+    let mut bot_conn = redis_conn.clone();
+    info!("Starting bot loop...");
 
-    Graph::prepare_cumulative_weekly_monthly(&mut graph, redis_conn.clone()).await?;
-
-    loop {
-        interval.tick().await;
-
-        match exchange.get_current_price().await {
-            Ok(price) => {
-                info!("Price = {:.2}", price,);
-                if let Err(e) = //bot.test(price).await
-                    bot.run_cycle(price, exchange.as_ref()).await
-                {
-                    eprintln!("Error during cycle: {e}");
-                }
-            }
-            Err(err) => eprintln!("Failed to fetch price: {err}"),
-        }
-
-        if Helper::is_midnight() {
-            warn!("It's midnight now!");
-            Graph::prepare_cumulative_weekly_monthly(&mut graph, redis_conn.clone()).await?;
-        }
+    if let Err(e) = run_bot(&mut bot_conn, &mut bot, exchange.clone(), config_clone).await {
+        log::error!("Bot loop error: {}", e);
     }
+
+    Ok(())
 }

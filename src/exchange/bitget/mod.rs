@@ -13,6 +13,7 @@ use crate::{
 };
 
 //For binance: https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=5m&limit=100
+//FOR BITGET, USE: https://api.bitget.com/api/v2/public/time to get the Bitget Server time
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ApiResponse<T> {
@@ -128,8 +129,10 @@ where
 
 #[async_trait]
 pub trait CandleData: Send + Sync {
+    fn new() -> Self;
+
     /// Return the latest candles
-    async fn get_bitget_candles(&self, interval: String) -> Result<Vec<Candle>>;
+    async fn get_bitget_candles(&self, interval: String, limit: String) -> Result<Vec<Candle>>;
 }
 
 //#[async_trait]
@@ -159,12 +162,19 @@ pub struct HttpCandleData {
 
 #[async_trait::async_trait]
 impl CandleData for HttpCandleData {
-    async fn get_bitget_candles(&self, interval: String) -> Result<Vec<Candle>> {
+    fn new() -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            symbol: String::from("BTCUSDT"),
+        }
+    }
+
+    async fn get_bitget_candles(&self, interval: String, limit: String) -> Result<Vec<Candle>> {
         let url = format!(
-            "https://api.bitget.com/api/v2/mix/market/candles?symbol={}&granularity={}&limit=100&productType=usdt-futures",
-            self.symbol, interval
+            "https://api.bitget.com/api/v2/mix/market/candles?symbol={}&granularity={}&limit={}&productType=usdt-futures",
+            self.symbol, interval, limit
         );
-        info!("url: {:?}", url);
+        //info!("url: {:?}", url);
         let bitget = self.client.get(url).send().await?;
 
         let bit_text = bitget.text().await?;
@@ -172,7 +182,7 @@ impl CandleData for HttpCandleData {
         let response: ApiResponse<Vec<Candle>> = serde_json::from_str(&bit_text).unwrap();
         assert_eq!(response.code, "00000");
         assert_eq!(response.msg, "success");
-        assert_eq!(response.data.len(), 100);
+        // assert_eq!(response.data.len(), limit.parse::<usize>().unwrap());
 
         let candles = response.data;
 
@@ -201,9 +211,9 @@ impl FuturesCall for HttpCandleData {
 
         let client_order_id = open_position.id.to_string();
 
-        let preset_stop_loss_price = open_position.sl.unwrap().to_string();
+        // let preset_stop_loss_price = open_position.sl.unwrap().to_string();
 
-        let preset_take_profit_price = open_position.tp.unwrap().to_string();
+        // let preset_take_profit_price = open_position.tp.unwrap().to_string();
 
         if open_position.pos == Position::Long {
             side = "buy";
@@ -266,10 +276,24 @@ impl FuturesCall for HttpCandleData {
         let bit_text = bitget.text().await?;
         info!("bit_text::modify_futures_order -> {:?}", bit_text);
 
-        let response: ApiResponse<PlaceOrderData> = serde_json::from_str(&bit_text).unwrap();
+        let response: ApiResponse<PlaceOrderData> =
+            serde_json::from_str(&bit_text).unwrap_or(ApiResponse {
+                code: "4000".to_string(),
+                msg: "Error".to_string(),
+                request_time: Utc::now().timestamp(),
+                data: PlaceOrderData {
+                    client_oid: String::from("Failed to modify order"),
+                    order_id: String::from("Failed to modify order"),
+                },
+            });
         info!("response::modify_futures_order -> {:?}", response);
-        assert_eq!(response.code, "00000");
-        assert_eq!(response.msg, "success");
+
+        if response.code != "00000" {
+            return Ok(PlaceOrderData {
+                client_oid: String::from("Failed to modify order"),
+                order_id: String::from("Failed to modify order"),
+            });
+        }
 
         let order_data = response.data;
 
@@ -286,8 +310,9 @@ impl FuturesCall for HttpCandleData {
         headers.insert("ACCESS-PASSPHRASE", config.passphrase.parse().unwrap());
         headers.insert(
             "ACCESS-TIMESTAMP",
-            Utc::now().timestamp().to_string().parse().unwrap(),
+            Utc::now().timestamp_millis().to_string().parse().unwrap(),
         );
+        headers.insert("Content-Type", "application/json".parse().unwrap());
         headers.insert("locale", "english".parse().unwrap());
 
         Ok(headers)
@@ -323,10 +348,24 @@ impl FuturesCall for HttpCandleData {
         let bit_text = bitget.text().await?;
         info!("bit_text::new_futures_call -> {:?}", bit_text);
 
-        let response: ApiResponse<PlaceOrderData> = serde_json::from_str(&bit_text).unwrap();
+        let response: ApiResponse<PlaceOrderData> =
+            serde_json::from_str(&bit_text).unwrap_or(ApiResponse {
+                code: "4000".to_string(),
+                msg: "Error".to_string(),
+                request_time: Utc::now().timestamp(),
+                data: PlaceOrderData {
+                    client_oid: String::from("Failed to place order"),
+                    order_id: String::from("Failed to place order"),
+                },
+            });
         info!("response::new_futures_call -> {:?}", response);
-        assert_eq!(response.code, "00000");
-        assert_eq!(response.msg, "success");
+
+        if response.code != "00000" {
+            return Ok(PlaceOrderData {
+                client_oid: String::from("Failed to place order"),
+                order_id: String::from("Failed to place order"),
+            });
+        }
 
         let order = response.data;
 

@@ -17,6 +17,8 @@ anyhow = "1.0"
 redis          = { version = "0.23", features = ["tokio-comp"] }
 redis-derive = "0.1.7"
 chrono = { version = "0.4", features = ["serde",] }
+anyhow_serde = "1.0"
+tokio-cron-scheduler = "*"
 
 # UUID v4 + serde support
 uuid = { version = "1.4", features = ["serde", "v4"] }
