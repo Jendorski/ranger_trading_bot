@@ -7,7 +7,7 @@
 // serde_json = "1.0"
 // chrono = { version = "0.4", features = ["serde"] }
 
-use std::thread;
+use std::sync::Arc;
 use std::time::Duration;
 
 use log::info;
@@ -17,11 +17,12 @@ use tokio::time;
 use crate::bot::{Zone, Zones};
 use crate::config::Config;
 use crate::exchange::bitget::{self, Candle, CandleData, HttpCandleData};
+use crate::exchange::{Exchange, HttpExchange};
 use crate::helper::{TRADING_BOT_SMART_MONEY_CONCEPTS_NEXT_CALL, TRADING_BOT_ZONES};
 use chrono::TimeZone;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tokio_cron_scheduler::{Job, JobScheduler, JobSchedulerError};
+use tokio_cron_scheduler::{Job, JobScheduler};
 
 /// OHLCV bar with timestamp
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -381,13 +382,116 @@ impl SmcEngine {
         }
     }
 
-    pub async fn smc_next_call(conn: &mut redis::aio::MultiplexedConnection) {
-        let next_call: String = conn
-            .get(TRADING_BOT_SMART_MONEY_CONCEPTS_NEXT_CALL)
+    pub async fn smc_next_call(conn: &mut redis::aio::MultiplexedConnection) -> () {
+        //Get the current zones
+        let cached_zones: String = conn.get(TRADING_BOT_ZONES).await.unwrap();
+        let zones: Zones = serde_json::from_str(&cached_zones).unwrap();
+        let long_zone = zones.long_zones[0];
+        info!("long_zone: {:?}", long_zone);
+
+        let short_zone = zones.short_zones[0];
+        info!("short_zone: {:?}", short_zone);
+
+        //Get the price from the exchange API
+        let exchange = Arc::new(HttpExchange {
+            client: reqwest::Client::new(),
+            symbol: Config::from_env().unwrap().symbol,
+        });
+        let price = exchange.get_current_price().await.unwrap();
+        info!("price: {:?}", price);
+
+        //Get the latest close from the exchange API
+        let bar_data = return_data(String::from("4H"), String::from("150")).await;
+        let last = bar_data.last().unwrap();
+        info!("last.close: {}", last.close);
+
+        let diff_between_past_zones = short_zone.high - long_zone.low;
+        info!("diff_between_past_zones: {:?}", diff_between_past_zones);
+
+        //let's assume the price is 82,000 and the latest close is 82,741
+        //And our Zones are:
+        //short_zone => low: 94543.6, high: 94614.5077
+        //long_zone => low: 83714.866725, high: 83777.7
+        //If the price is below the low of the LONG ZONE and price is below the latest close, take the difference between zones and use it to construct another Zone and open a SHORT position
+        //If the price is above the high of the SHORT ZONE and price is above the latest close, take the difference between zones and use it to construct another Zone and open a LONG position
+        if price > short_zone.high && price > last.close {
+            info!(
+                "Price is above the last close!. Price is also above the latest close, 
+            This means it's time to execute a new LONG and create a new ZONE"
+            );
+            let new_short_zone_high = short_zone.high + diff_between_past_zones;
+            let new_short_zone_low_diff = new_short_zone_high * 0.00075;
+            let new_short_zone_low = new_short_zone_high - new_short_zone_low_diff;
+            let new_short_zone = Zone {
+                low: new_short_zone_low,
+                high: new_short_zone_high,
+            };
+            info!("new_short_zone: {:?}", new_short_zone);
+
+            let new_long_zone_high = price;
+            let new_long_zone_low_diff = new_long_zone_high * 0.00075;
+            let new_long_zone_low = new_long_zone_high - new_long_zone_low_diff;
+            let new_long_zone = Zone {
+                low: new_long_zone_low,
+                high: new_long_zone_high,
+            };
+            info!("new_long_zone: {:?}", new_long_zone);
+
+            let mut new_zones = zones.clone();
+            new_zones.long_zones.push(new_long_zone);
+            new_zones.short_zones.push(new_short_zone);
+            info!("new_zones: {:?}", new_zones);
+            // let serialized = serde_json::to_string(&new_zones).unwrap();
+            // let _: () = conn.set(TRADING_BOT_ZONES, serialized).await.unwrap();
+        }
+
+        if price < long_zone.low && price < last.close {
+            info!(
+                "Price is below the last close!. Price is also below the latest close, 
+                This means it's time to execute a SHORT and create a new ZONE"
+            );
+
+            //Take the difference between the previous zones and use it to construct another Zone
+            let new_long_zone_high = long_zone.low - diff_between_past_zones;
+            info!("new_long_zone_high: {:?}", new_long_zone_high);
+
+            let new_long_zone_low_diff = new_long_zone_high * 0.00075;
+            info!("new_long_zone_low_diff: {:?}", new_long_zone_low_diff);
+
+            let new_long_zone_low = new_long_zone_high - new_long_zone_low_diff;
+            info!("new_long_zone_low: {:?}", new_long_zone_low);
+
+            let new_long_zone = Zone {
+                low: new_long_zone_low,
+                high: new_long_zone_high,
+            };
+            info!("new_long_zone: {:?}", new_long_zone);
+
+            let new_short_zone_high = price;
+            let short_zone_low_diff = new_short_zone_high * 0.00075;
+            info!("short_zone_low_diff: {:?}", short_zone_low_diff);
+            let new_short_zone_low = new_short_zone_high - short_zone_low_diff;
+            info!("new_short_zone_low: {:?}", new_short_zone_low);
+
+            let new_short_zone = Zone {
+                low: new_short_zone_low,
+                high: new_short_zone_high,
+            };
+            info!("new_short_zone: {:?}", new_short_zone);
+
+            let mut new_zones = zones.clone();
+            new_zones.long_zones.push(new_long_zone);
+            new_zones.short_zones.push(new_short_zone);
+            info!("new_zones: {:?}", new_zones);
+            //let serialized = serde_json::to_string(&zones).unwrap();
+            //let _: () = conn.set(TRADING_BOT_ZONES, serialized).await.unwrap();
+        }
+
+        let _: () = conn
+            .del(TRADING_BOT_SMART_MONEY_CONCEPTS_NEXT_CALL)
             .await
             .unwrap();
-        let next_call_seconds = next_call.parse::<u64>().unwrap();
-        info!("next_call_seconds: {}", next_call_seconds);
+        ()
     }
 }
 

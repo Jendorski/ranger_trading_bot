@@ -1123,7 +1123,9 @@ impl<'a> Bot<'a> {
                     let _: Result<()> =
                         Self::store_partial_profit_targets(self, price, self.pos).await;
                 } else {
-                    //warn!("Price {:.2} out of any Ranger zone -- staying flat", price);
+                    //Track for new zone targets
+                    warn!("Price {:.2} out of any Ranger zone -- staying flat", price);
+                    //let _: () = SmcEngine::smc_find_targets(&mut self.redis_conn, price).await;
                 }
             }
 
