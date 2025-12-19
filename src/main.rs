@@ -14,6 +14,7 @@ use crate::helper::Helper;
 mod bot;
 mod cache;
 mod config;
+mod encryption;
 mod exchange;
 mod graph;
 mod helper;
@@ -88,7 +89,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut bot_conn = redis_conn.clone();
     info!("Starting bot loop...");
 
-    if let Err(e) = run_bot(&mut bot_conn, &mut bot, exchange.clone(), config_clone).await {
+    if let Err(e) = //bot.test().await {
+        run_bot(&mut bot_conn, &mut bot, exchange.clone(), config_clone).await
+    {
         log::error!("Bot loop error: {}", e);
     }
 

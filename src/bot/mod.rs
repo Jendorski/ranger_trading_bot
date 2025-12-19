@@ -6,10 +6,12 @@ use redis::{AsyncCommands, RedisError};
 use serde::{Deserialize, Serialize};
 use std::ops::Div;
 use std::result::Result::Ok;
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::config::Config;
 use crate::exchange::Exchange;
+use crate::exchange::HttpExchange;
 use crate::exchange::bitget::PlaceOrderData;
 use crate::helper::TRADING_BOT_LOSS_COUNT;
 use crate::helper::TRADING_PARTIAL_PROFIT_TARGET;
@@ -1045,7 +1047,27 @@ impl<'a> Bot<'a> {
     }
 
     pub async fn test(&mut self) -> Result<()> {
-        let _: () = SmcEngine::smc_find_targets(&mut self.redis_conn, 82000.00).await;
+        self.open_pos = OpenPosition {
+            id: Uuid::new_v4(),
+            pos: Position::Long,
+            entry_price: 86800.11,
+            position_size: 0.09,
+            entry_time: Utc::now(),
+            tp: Some(90000.4),
+            sl: Some(83000.4),
+            margin: Some(50.01),
+            quantity: Some(0.09),
+            leverage: Some(20.01),
+            risk_pct: Some(0.075),
+        };
+        //Get the price from the exchange API
+        let exchange = Arc::new(HttpExchange {
+            client: reqwest::Client::new(),
+            symbol: Config::from_env().unwrap().symbol,
+        });
+        let price = exchange.place_market_order(self.open_pos).await.unwrap();
+        info!("price: {:?}", price);
+        //let _: () = SmcEngine::smc_find_targets(&mut self.redis_conn, 82000.00).await;
         Ok(())
     }
 
