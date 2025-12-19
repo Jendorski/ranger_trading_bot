@@ -1,12 +1,3 @@
-// smc_engine.rs
-// Requires: serde = { version = "1.0", features = ["derive"] }, serde_json = "1.0", chrono = "0.4"
-// Example cargo.toml dependencies:
-//
-// [dependencies]
-// serde = { version = "1.0", features = ["derive"] }
-// serde_json = "1.0"
-// chrono = { version = "0.4", features = ["serde"] }
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -582,8 +573,9 @@ async fn return_data(timeframe: String, limit: String) -> Vec<Bar> {
 
 //A customizable loop that will run at configured times
 // If we need 4H candle data, we can run the loop every 30minutes so we can be on-sync with the changes as the market can move fast
+//If we need 15m candle data, we can run the loop every 45 seconds so we can be on-sync with the changes as the market can move fast
 pub async fn smc_loop(mut conn: redis::aio::MultiplexedConnection, config: Config) {
-    let loop_interval_seconds = 1800;
+    let loop_interval_seconds = 45; //1800;
 
     let mut interval = time::interval(Duration::from_secs(loop_interval_seconds));
 
@@ -599,6 +591,7 @@ pub async fn smc_loop(mut conn: redis::aio::MultiplexedConnection, config: Confi
 }
 
 // Convert the candles to Bar, which are used to find the Strong Lows and Strong Highs, then convert the Bar to Zones needed for trading.
+///todo!: setup config for the pivot low and pivot high
 async fn smc_main(conn: &mut redis::aio::MultiplexedConnection, timeframe: String, limit: String) {
     let mut eng = SmcEngine::new(3, 3);
     let mut sample_bars = return_data(timeframe, limit).await;

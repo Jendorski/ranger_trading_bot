@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use log::info;
 
+use crate::config::Config;
 use crate::exchange::bitget::{Candle, CandleData, HttpCandleData};
 
 #[derive(Debug, Clone)]
@@ -510,10 +511,7 @@ pub async fn run_momentum_tracker() -> Result<(), anyhow::Error> {
     // Generate sample data
     println!("Generating sample 5-minute Bitcoin data...");
     //generate_sample_data(&mut tracker, 50);
-    let candle_data = Arc::new(HttpCandleData {
-        client: reqwest::Client::new(),
-        symbol: String::from("BTCUSDT"),
-    });
+    let candle_data = Arc::new(HttpCandleData::new());
     let res: Result<Vec<Candle>, anyhow::Error> = candle_data
         .get_bitget_candles(String::from("15m"), String::from("100"))
         .await;
