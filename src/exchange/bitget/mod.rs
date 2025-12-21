@@ -262,6 +262,8 @@ impl FuturesCall for HttpCandleData {
 
         let price = open_position.entry_price.to_string();
 
+        let client_order_id = open_position.id.to_string();
+
         let mut side: &str = "buy";
 
         if open_position.pos == Position::Long {
@@ -283,6 +285,7 @@ impl FuturesCall for HttpCandleData {
             "productType": "USDT-FUTURES",
             "marginCoin": "USDT",
             "force": "gtc",
+            "clientOid": client_order_id,
             "presetStopSurplusPrice": preset_stop_surplus_price,
             "presetStopLossPrice": preset_stop_loss_price
         });
@@ -378,12 +381,14 @@ impl FuturesCall for HttpCandleData {
         let path = "/api/v2/mix/order/place-order";
         let method = "POST";
 
-        let preset_stop_surplus_price = open_position.tp.unwrap().to_string();
+        //let preset_stop_surplus_price = open_position.tp.unwrap().to_string();
         let preset_stop_loss_price = open_position.sl.unwrap().to_string();
 
         let size = open_position.position_size.to_string();
 
         let price = open_position.entry_price.to_string();
+
+        let client_order_id = open_position.id.to_string();
 
         let mut side: &str = "buy";
 
@@ -406,7 +411,8 @@ impl FuturesCall for HttpCandleData {
             "productType": "USDT-FUTURES",
             "marginCoin": "USDT",
             "force": "gtc",
-            "presetStopSurplusPrice": preset_stop_surplus_price,
+            "clientOid": client_order_id,
+            //"presetStopSurplusPrice": preset_stop_surplus_price,
             "presetStopLossPrice": preset_stop_loss_price
         });
 

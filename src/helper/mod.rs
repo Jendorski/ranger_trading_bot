@@ -157,6 +157,10 @@ impl Helper {
         return pl * 100.00; //leverage *
     }
 
+    pub fn truncate_to_1_dp(val: f64) -> f64 {
+        (val * 10.0).trunc() / 10.0
+    }
+
     pub fn stop_loss_price(
         entry_price: f64,
         margin: f64,

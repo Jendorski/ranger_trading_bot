@@ -78,6 +78,7 @@ impl Graph {
             roi: Some(0.00),
             leverage: Some(0.00),
             margin: Some(0.00),
+            order_id: None,
         };
 
         closed.as_str()

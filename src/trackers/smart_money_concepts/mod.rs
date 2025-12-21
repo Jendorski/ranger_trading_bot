@@ -90,6 +90,7 @@ pub enum SMCEvent {
 }
 
 /// The main engine. Use `process_bar` for each new bar (in chronological order).
+#[derive(Debug, Clone)]
 pub struct SmcEngine {
     /// lookback used to detect local pivot: pivot when value is extreme compared to `left` previous bars and `right` future bars
     pivot_left: usize,
@@ -318,62 +319,88 @@ impl SmcEngine {
         events
     }
 
-    pub async fn smc_find_targets(conn: &mut redis::aio::MultiplexedConnection, price: f64) {
-        let cached_zones: String = conn.get(TRADING_BOT_ZONES).await.unwrap();
-        let zones: Zones = serde_json::from_str(&cached_zones).unwrap();
+    async fn smc_process_pre_new_target(&mut self, conn: &mut redis::aio::MultiplexedConnection) {
+        let config = Config::from_env().unwrap();
+        let smc_time_frame = config.smc_timeframe;
+        let smc_candle_count = config.smc_candle_count;
+
+        let mut sample_bars = return_data(smc_time_frame, smc_candle_count).await;
+
+        sample_bars.sort_by_key(|s| s.time);
+
+        let last = sample_bars.last().unwrap();
+        info!("last.time: {:?}", last.time.timestamp());
+        let next = (last.time + Duration::from_secs(60 * 60 * 4)).timestamp();
+        info!("next: {}", next);
+
+        let diff_seconds = next - Utc::now().timestamp();
+        info!("diff_seconds: {}", diff_seconds);
+
+        //it is the diff_seconds we would use to make the next call, get the latest close
+        let _: () = conn
+            .set(
+                TRADING_BOT_SMART_MONEY_CONCEPTS_NEXT_CALL,
+                diff_seconds.to_string(),
+            )
+            .await
+            .unwrap();
+
+        let sched = JobScheduler::new().await.unwrap();
+
+        let conn_clone = conn.clone();
+        let job = Job::new_one_shot_async(
+            Duration::from_secs(diff_seconds.try_into().unwrap_or(14400)), // 4 hours
+            move |_uuid, _l| {
+                let mut conn = conn_clone.clone();
+                Box::pin(async move {
+                    Self::smc_next_call(&mut conn).await;
+                })
+            },
+        )
+        .unwrap();
+        sched.add(job).await.unwrap();
+        tokio::spawn(async move { sched.start().await });
+    }
+
+    pub async fn smc_find_targets(
+        mut self,
+        conn: &mut redis::aio::MultiplexedConnection,
+        price: f64,
+    ) {
+        let cached_zones: String = conn
+            .get(TRADING_BOT_ZONES)
+            .await
+            .unwrap_or(String::from("[]"));
+
+        let zones: Zones = serde_json::from_str(&cached_zones).unwrap_or(Zones {
+            long_zones: vec![],
+            short_zones: vec![],
+        });
+
+        if zones.long_zones.is_empty() || zones.short_zones.is_empty() {
+            info!("No zones found");
+            return;
+        }
+
         let long_zone = zones.long_zones[0];
-        info!("long_zone: {}", long_zone.low);
+        let short_zone = zones.short_zones[0];
 
         if price < long_zone.low {
             info!("Price is below the long zone low!");
-
-            let price_difference = long_zone.low - price;
-            info!("price_difference: {}", price_difference);
-
-            let mut sample_bars = return_data(String::from("4H"), String::from("100")).await;
-
-            sample_bars.sort_by_key(|s| s.time);
-
-            let last = sample_bars.last().unwrap();
-            info!("last.time: {:?}", last.time.timestamp());
-            let next = (last.time + Duration::from_secs(60 * 60 * 4)).timestamp();
-            info!("next: {}", next);
-
-            let diff_seconds = next - Utc::now().timestamp();
-            info!("diff_seconds: {}", diff_seconds);
-
-            //it is the diff_seconds we would use to make the next call, get the latest close
-            let _: () = conn
-                .set(
-                    TRADING_BOT_SMART_MONEY_CONCEPTS_NEXT_CALL,
-                    diff_seconds.to_string(),
-                )
-                .await
-                .unwrap();
-
-            let sched = JobScheduler::new().await.unwrap();
-
-            let conn_clone = conn.clone();
-            let job = Job::new_one_shot_async(
-                Duration::from_secs(diff_seconds.try_into().unwrap_or(14400)), // 4 hours
-                move |_uuid, _l| {
-                    let mut conn = conn_clone.clone();
-                    Box::pin(async move {
-                        Self::smc_next_call(&mut conn).await;
-                    })
-                },
-            )
-            .unwrap();
-            sched.add(job).await.unwrap();
-            tokio::spawn(async move { sched.start().await });
+            Self::smc_process_pre_new_target(&mut self, conn).await;
         }
 
-        if price > zones.short_zones[0].high {
+        if price > short_zone.high {
             info!("Price is above the short zone high");
+            Self::smc_process_pre_new_target(&mut self, conn).await;
         }
     }
 
     pub async fn smc_next_call(conn: &mut redis::aio::MultiplexedConnection) -> () {
+        let config = Config::from_env().unwrap();
+        let smc_time_frame = config.smc_timeframe;
+        let smc_candle_count = config.smc_candle_count;
+
         //Get the current zones
         let cached_zones: String = conn.get(TRADING_BOT_ZONES).await.unwrap();
         let zones: Zones = serde_json::from_str(&cached_zones).unwrap();
@@ -392,7 +419,7 @@ impl SmcEngine {
         info!("price: {:?}", price);
 
         //Get the latest close from the exchange API
-        let bar_data = return_data(String::from("4H"), String::from("150")).await;
+        let bar_data = return_data(smc_time_frame, smc_candle_count).await;
         let last = bar_data.last().unwrap();
         info!("last.close: {}", last.close);
 
@@ -575,7 +602,7 @@ async fn return_data(timeframe: String, limit: String) -> Vec<Bar> {
 // If we need 4H candle data, we can run the loop every 30minutes so we can be on-sync with the changes as the market can move fast
 //If we need 15m candle data, we can run the loop every 45 seconds so we can be on-sync with the changes as the market can move fast
 pub async fn smc_loop(mut conn: redis::aio::MultiplexedConnection, config: Config) {
-    let loop_interval_seconds = 45; //1800;
+    let loop_interval_seconds = 1800; //45
 
     let mut interval = time::interval(Duration::from_secs(loop_interval_seconds));
 
@@ -639,14 +666,30 @@ async fn smc_main(conn: &mut redis::aio::MultiplexedConnection, timeframe: Strin
         .iter()
         .min_by(|a, b| a.low.partial_cmp(&b.low).unwrap())
         .cloned()
-        .unwrap_or(sweep_lows.first().unwrap().clone());
+        .unwrap_or(Zone {
+            low: 0.0,
+            high: 0.0,
+        });
+
+    if long_zone.low == 0.0 || long_zone.high == 0.0 {
+        info!("No long zone found");
+        return;
+    }
 
     // For short zones, find the zone with the highest price (maximum high value)
     let short_zone = sweep_highs
         .iter()
         .max_by(|a, b| a.high.partial_cmp(&b.high).unwrap())
         .cloned()
-        .unwrap_or(sweep_highs.first().unwrap().clone());
+        .unwrap_or(Zone {
+            low: 0.0,
+            high: 0.0,
+        });
+
+    if short_zone.low == 0.0 || short_zone.high == 0.0 {
+        info!("No short zone found");
+        return;
+    }
 
     let zones = Zones {
         long_zones: [long_zone].to_vec(),
