@@ -14,6 +14,7 @@ use crate::{
     bot::{OpenPosition, Position},
     config::Config,
     encryption,
+    helper::Helper,
 };
 
 //For binance: https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=5m&limit=100
@@ -382,7 +383,7 @@ impl FuturesCall for HttpCandleData {
         let method = "POST";
 
         //let preset_stop_surplus_price = open_position.tp.unwrap().to_string();
-        let preset_stop_loss_price = open_position.sl.unwrap().to_string();
+        let preset_stop_loss_price = Helper::truncate_to_1_dp(open_position.sl.unwrap_or(0.00));
 
         let size = open_position.position_size.to_string();
 
@@ -436,8 +437,16 @@ impl FuturesCall for HttpCandleData {
         let response_txt = response.text().await?;
         info!("response_txt: {:?}", response_txt);
 
-        let response_json: ApiResponse<PlaceOrderData> =
-            serde_json::from_str(&response_txt).expect("An error occurred");
+        let response_json: ApiResponse<PlaceOrderData> = serde_json::from_str(&response_txt)
+            .unwrap_or(ApiResponse {
+                code: "4000".to_string(),
+                msg: "An error occurred".to_string(),
+                request_time: Utc::now().timestamp(),
+                data: PlaceOrderData {
+                    client_oid: String::from("Failed to place order"),
+                    order_id: String::from("Failed to place order"),
+                },
+            }); //.expect("An error occurred");
 
         if response_json.code != "00000" {
             return Ok(PlaceOrderData {

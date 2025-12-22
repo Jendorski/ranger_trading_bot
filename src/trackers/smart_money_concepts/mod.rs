@@ -328,9 +328,11 @@ impl SmcEngine {
 
         sample_bars.sort_by_key(|s| s.time);
 
+        let duration = 60 * 15; //60 * 60 * 4;
+
         let last = sample_bars.last().unwrap();
         info!("last.time: {:?}", last.time.timestamp());
-        let next = (last.time + Duration::from_secs(60 * 60 * 4)).timestamp();
+        let next = (last.time + Duration::from_secs(duration)).timestamp();
         info!("next: {}", next);
 
         let diff_seconds = next - Utc::now().timestamp();
