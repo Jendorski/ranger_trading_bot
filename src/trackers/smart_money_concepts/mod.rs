@@ -618,7 +618,7 @@ async fn return_data(timeframe: String, limit: String) -> Vec<Bar> {
 // If we need 4H candle data, we can run the loop every 30minutes so we can be on-sync with the changes as the market can move fast
 //If we need 15m candle data, we can run the loop every 45 seconds so we can be on-sync with the changes as the market can move fast
 pub async fn smc_loop(mut conn: redis::aio::MultiplexedConnection, config: Config) {
-    let loop_interval_seconds = 1800; //1800 == 30mins, 45==45seconds, 180=3mins
+    let loop_interval_seconds = 180; //1800 == 30mins, 45==45seconds, 180=3mins
 
     let mut interval = time::interval(Duration::from_secs(loop_interval_seconds));
 
