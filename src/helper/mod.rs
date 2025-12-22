@@ -14,6 +14,7 @@ pub const TRADING_PARTIAL_PROFIT_TARGET: &str = "trading_partial_profit_target";
 pub const TRADING_BOT_LOSS_COUNT: &str = "trading_bot:loss_count";
 pub const TRADING_BOT_SMART_MONEY_CONCEPTS_NEXT_CALL: &str =
     "trading_bot:smart_money_concepts_next_call";
+pub const TRADING_BOT_RECOMMENDED_CALL: &str = "trading_bot:recommended_call";
 
 pub struct Helper {
     pub config: Config,

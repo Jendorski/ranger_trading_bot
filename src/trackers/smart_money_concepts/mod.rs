@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use log::info;
+use log::{info, warn};
 use redis::AsyncCommands;
 use tokio::time;
 
@@ -9,7 +9,9 @@ use crate::bot::{Zone, Zones};
 use crate::config::Config;
 use crate::exchange::bitget::{self, Candle, CandleData, HttpCandleData};
 use crate::exchange::{Exchange, HttpExchange};
-use crate::helper::{TRADING_BOT_SMART_MONEY_CONCEPTS_NEXT_CALL, TRADING_BOT_ZONES};
+use crate::helper::{
+    TRADING_BOT_RECOMMENDED_CALL, TRADING_BOT_SMART_MONEY_CONCEPTS_NEXT_CALL, TRADING_BOT_ZONES,
+};
 use chrono::TimeZone;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -349,9 +351,11 @@ impl SmcEngine {
 
         let sched = JobScheduler::new().await.unwrap();
 
+        let configed_diff_seconds = 60 * 60 * 4; //60 * 15; //14400
+
         let conn_clone = conn.clone();
         let job = Job::new_one_shot_async(
-            Duration::from_secs(diff_seconds.try_into().unwrap_or(14400)), // 4 hours
+            Duration::from_secs(diff_seconds.try_into().unwrap_or(configed_diff_seconds)), // 4 hours
             move |_uuid, _l| {
                 let mut conn = conn_clone.clone();
                 Box::pin(async move {
@@ -461,8 +465,13 @@ impl SmcEngine {
             new_zones.long_zones.push(new_long_zone);
             new_zones.short_zones.push(new_short_zone);
             info!("new_zones: {:?}", new_zones);
-            // let serialized = serde_json::to_string(&new_zones).unwrap();
-            // let _: () = conn.set(TRADING_BOT_ZONES, serialized).await.unwrap();
+            let serialized = serde_json::to_string(&new_zones).unwrap();
+
+            let _: () = conn
+                .set(TRADING_BOT_RECOMMENDED_CALL, &serialized)
+                .await
+                .unwrap();
+            let _: () = conn.set(TRADING_BOT_ZONES, &serialized).await.unwrap();
         }
 
         if price < long_zone.low && price < last.close {
@@ -503,8 +512,13 @@ impl SmcEngine {
             new_zones.long_zones.push(new_long_zone);
             new_zones.short_zones.push(new_short_zone);
             info!("new_zones: {:?}", new_zones);
-            //let serialized = serde_json::to_string(&zones).unwrap();
-            //let _: () = conn.set(TRADING_BOT_ZONES, serialized).await.unwrap();
+            let serialized = serde_json::to_string(&new_zones).unwrap();
+
+            let _: () = conn
+                .set(TRADING_BOT_RECOMMENDED_CALL, &serialized)
+                .await
+                .unwrap();
+            let _: () = conn.set(TRADING_BOT_ZONES, &serialized).await.unwrap();
         }
 
         let _: () = conn
@@ -604,7 +618,7 @@ async fn return_data(timeframe: String, limit: String) -> Vec<Bar> {
 // If we need 4H candle data, we can run the loop every 30minutes so we can be on-sync with the changes as the market can move fast
 //If we need 15m candle data, we can run the loop every 45 seconds so we can be on-sync with the changes as the market can move fast
 pub async fn smc_loop(mut conn: redis::aio::MultiplexedConnection, config: Config) {
-    let loop_interval_seconds = 180; //1800 == 30mins, 45==45seconds
+    let loop_interval_seconds = 1800; //1800 == 30mins, 45==45seconds, 180=3mins
 
     let mut interval = time::interval(Duration::from_secs(loop_interval_seconds));
 
