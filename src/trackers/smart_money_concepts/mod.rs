@@ -321,6 +321,7 @@ impl SmcEngine {
         events
     }
 
+    ///deprecated
     async fn smc_process_pre_new_target(&mut self, conn: &mut redis::aio::MultiplexedConnection) {
         let config = Config::from_env().unwrap();
         let smc_time_frame = config.smc_timeframe;
@@ -618,7 +619,7 @@ async fn return_data(timeframe: String, limit: String) -> Vec<Bar> {
 // If we need 4H candle data, we can run the loop every 30minutes so we can be on-sync with the changes as the market can move fast
 //If we need 15m candle data, we can run the loop every 45 seconds so we can be on-sync with the changes as the market can move fast
 pub async fn smc_loop(mut conn: redis::aio::MultiplexedConnection, config: Config) {
-    let loop_interval_seconds = 180; //1800 == 30mins, 45==45seconds, 180=3mins
+    let loop_interval_seconds = 1800; //1800 == 30mins, 45==45seconds, 180=3mins
 
     let mut interval = time::interval(Duration::from_secs(loop_interval_seconds));
 
@@ -631,6 +632,71 @@ pub async fn smc_loop(mut conn: redis::aio::MultiplexedConnection, config: Confi
         )
         .await;
     }
+}
+
+fn remove_conflicting_zones(
+    sweep_highs: Vec<Zone>,
+    sweep_lows: Vec<Zone>,
+    min_distance: f64,
+) -> (Vec<Zone>, Vec<Zone>) {
+    let mut keep_highs = vec![true; sweep_highs.len()];
+    let mut keep_lows = vec![true; sweep_lows.len()];
+
+    for (i, high) in sweep_highs.iter().enumerate() {
+        for (j, low) in sweep_lows.iter().enumerate() {
+            let distance = high.low - low.high;
+
+            if distance < min_distance && distance > 0.0 {
+                // Remove the weaker zone (you can use other criteria)
+                // Here we remove based on zone width
+                let high_width = high.high - high.low;
+                let low_width = low.high - low.low;
+
+                if high_width < low_width {
+                    keep_highs[i] = false;
+                } else {
+                    keep_lows[j] = false;
+                }
+            }
+        }
+    }
+
+    let filtered_highs: Vec<Zone> = sweep_highs
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| keep_highs[*i])
+        .map(|(_, z)| z)
+        .collect();
+
+    let filtered_lows: Vec<Zone> = sweep_lows
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| keep_lows[*i])
+        .map(|(_, z)| z)
+        .collect();
+
+    (filtered_highs, filtered_lows)
+}
+
+fn filter_close_zones(mut zones: Vec<Zone>, min_distance: f64) -> Vec<Zone> {
+    if zones.is_empty() {
+        return zones;
+    }
+
+    // Sort by midpoint
+    zones.sort_by(|a, b| a.midpoint().partial_cmp(&b.midpoint()).unwrap());
+
+    let mut filtered = vec![zones[0]];
+
+    for zone in zones.into_iter().skip(1) {
+        let last_accepted = filtered.last().unwrap();
+
+        if !zone.overlaps_or_too_close(last_accepted, min_distance) {
+            filtered.push(zone);
+        }
+    }
+
+    filtered
 }
 
 // Convert the candles to Bar, which are used to find the Strong Lows and Strong Highs, then convert the Bar to Zones needed for trading.
@@ -678,46 +744,56 @@ async fn smc_main(conn: &mut redis::aio::MultiplexedConnection, timeframe: Strin
         }
     }
 
-    let long_zone = sweep_lows
-        .iter()
-        .min_by(|a, b| a.low.partial_cmp(&b.low).unwrap())
-        .cloned()
-        .unwrap_or(Zone {
-            low: 0.0,
-            high: 0.0,
-        });
+    // let long_zone = sweep_lows
+    //     .iter()
+    //     .min_by(|a, b| a.low.partial_cmp(&b.low).unwrap())
+    //     .cloned()
+    //     .unwrap_or(Zone {
+    //         low: 0.0,
+    //         high: 0.0,
+    //     });
 
-    if long_zone.low == 0.0 || long_zone.high == 0.0 {
+    let (filtered_highs, filtered_lows) = remove_conflicting_zones(sweep_highs, sweep_lows, 1500.0);
+
+    let long_zones = filter_close_zones(filtered_lows, 1500.0);
+    let short_zones = filter_close_zones(filtered_highs, 1500.0);
+
+    if long_zones.is_empty() {
         info!("No long zone found");
         return;
     }
 
-    // For short zones, find the zone with the highest price (maximum high value)
-    let short_zone = sweep_highs
-        .iter()
-        .max_by(|a, b| a.high.partial_cmp(&b.high).unwrap())
-        .cloned()
-        .unwrap_or(Zone {
-            low: 0.0,
-            high: 0.0,
-        });
-
-    if short_zone.low == 0.0 || short_zone.high == 0.0 {
+    if short_zones.is_empty() {
         info!("No short zone found");
         return;
     }
 
+    // For short zones, find the zone with the highest price (maximum high value)
+    // let short_zone = sweep_highs
+    //     .iter()
+    //     .max_by(|a, b| a.high.partial_cmp(&b.high).unwrap())
+    //     .cloned()
+    //     .unwrap_or(Zone {
+    //         low: 0.0,
+    //         high: 0.0,
+    //     });
+
+    // if short_zone.low == 0.0 || short_zone.high == 0.0 {
+    //     info!("No short zone found");
+    //     return;
+    // }
+
     let zones = Zones {
-        long_zones: [long_zone].to_vec(),
-        short_zones: [short_zone].to_vec(),
+        long_zones,
+        short_zones,
     };
 
     info!("zones.long_zones: {:?}", zones.long_zones);
     info!("zones.short_zones: {:?}", zones.short_zones);
 
     // Save the zones to redis
-    let serialized_zones = serde_json::to_string(&zones).unwrap();
-    let _: () = conn.set(TRADING_BOT_ZONES, serialized_zones).await.unwrap();
+    // let serialized_zones = serde_json::to_string(&zones).unwrap();
+    // let _: () = conn.set(TRADING_BOT_ZONES, serialized_zones).await.unwrap();
 
     ()
 }

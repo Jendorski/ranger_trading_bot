@@ -10,6 +10,7 @@ use crate::config::Config;
 use crate::exchange::{Exchange, HttpExchange};
 use crate::graph::Graph;
 use crate::helper::Helper;
+use crate::trackers::momentum;
 
 mod bot;
 mod cache;
@@ -85,6 +86,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let _smc_handle = tokio::spawn(async move {
         trackers::smart_money_concepts::smc_loop(smc_conn, smc_config).await;
     });
+
+    // let _momentum_websocket_handler = tokio::spawn(async move {
+    //     let _: () = momentum::start_live_tracking().await.unwrap();
+    // });
 
     let mut bot_conn = redis_conn.clone();
     info!("Starting bot loop...");

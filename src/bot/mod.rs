@@ -34,6 +34,18 @@ impl Zone {
     pub fn contains(&self, price: f64) -> bool {
         price >= self.low && price <= self.high
     }
+
+    #[inline]
+    pub fn midpoint(&self) -> f64 {
+        (self.low + self.high) / 2.0
+    }
+
+    #[inline]
+    pub fn overlaps_or_too_close(&self, other: &Zone, min_distance: f64) -> bool {
+        // Check if zones overlap or are closer than min_distance
+        let distance = (self.midpoint() - other.midpoint()).abs();
+        distance < min_distance
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1105,14 +1117,6 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
-    async fn prep_track_outer_zones(&mut self, price: f64) -> Result<()> {
-        let cloned_smc = self.smc.clone();
-        cloned_smc
-            .smc_find_targets(&mut self.redis_conn, price)
-            .await;
-        Ok(())
-    }
-
     pub async fn run_cycle(&mut self, price: f64, exchange: &dyn Exchange) -> Result<()> {
         if price == 1.11 {
             warn!("Price failure! -> {:?}", price);
@@ -1190,7 +1194,6 @@ impl<'a> Bot<'a> {
                 } else {
                     //Track for new zone targets
                     warn!("Price {:.2} out of any Ranger zone -- staying flat", price);
-                    let _ = self.prep_track_outer_zones(price).await;
                 }
             }
 

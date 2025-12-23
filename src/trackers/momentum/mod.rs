@@ -1,11 +1,12 @@
+use futures_util::{SinkExt, StreamExt};
 use std::collections::VecDeque;
 use std::result::Result::Ok;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
 use log::info;
 
-use crate::config::Config;
 use crate::exchange::bitget::{Candle, CandleData, HttpCandleData};
 
 #[derive(Debug, Clone)]
@@ -317,20 +318,20 @@ impl BitcoinMomentumTracker {
     }
 
     /// Gets the last N price data points
-    pub fn get_recent_prices(&self, count: usize) -> Vec<f64> {
-        self.price_history
-            .iter()
-            .rev()
-            .take(count)
-            .rev()
-            .cloned()
-            .collect()
-    }
+    // pub fn get_recent_prices(&self, count: usize) -> Vec<f64> {
+    //     self.price_history
+    //         .iter()
+    //         .rev()
+    //         .take(count)
+    //         .rev()
+    //         .cloned()
+    //         .collect()
+    // }
 
-    /// Gets the last N volume data points
-    pub fn get_recent_volumes(&self) -> Vec<f64> {
-        self.volume_history.iter().cloned().collect()
-    }
+    // /// Gets the last N volume data points
+    // pub fn get_recent_volumes(&self) -> Vec<f64> {
+    //     self.volume_history.iter().cloned().collect()
+    // }
 
     /// Prints formatted momentum report
     pub fn print_momentum_report(&self) {
@@ -375,28 +376,6 @@ impl BitcoinMomentumTracker {
         } else {
             println!("Insufficient data for momentum analysis");
         }
-    }
-}
-
-/// Generates simulated Bitcoin price data for testing
-pub fn generate_sample_data(tracker: &mut BitcoinMomentumTracker, num_points: usize) {
-    let mut base_price = 65000.0 + (rand::random::<f64>() * 5000.0);
-
-    for i in 0..num_points {
-        // Simulate realistic Bitcoin price movement
-        let volatility = 0.003; // 0.3% average movement per 5min
-        let trend = (i as f64 * 0.1).sin() * 0.001; // Slight trending component
-        let random_walk = (rand::random::<f64>() - 0.5) * volatility;
-
-        base_price *= 1.0 + trend + random_walk;
-
-        // Generate volume (20M to 35M USD typical range)
-        let volume = 20_000_000.0 + (rand::random::<f64>() * 15_000_000.0);
-
-        tracker.add_data_point(base_price, volume);
-
-        // Simulate 5-minute intervals
-        std::thread::sleep(std::time::Duration::from_millis(10)); // Fast simulation
     }
 }
 
@@ -506,77 +485,58 @@ pub async fn run_momentum_tracker() -> Result<(), anyhow::Error> {
     println!("Bitcoin 5-Minute Momentum Tracker");
     println!("=================================");
 
-    let mut tracker = BitcoinMomentumTracker::new(100);
+    let tracker = BitcoinMomentumTracker::new(1000);
 
     // Generate sample data
     println!("Generating sample 5-minute Bitcoin data...");
     //generate_sample_data(&mut tracker, 50);
     let candle_data = Arc::new(HttpCandleData::new());
     let res: Result<Vec<Candle>, anyhow::Error> = candle_data
-        .get_bitget_candles(String::from("15m"), String::from("100"))
+        .get_bitget_candles(String::from("15m"), String::from("1000"))
         .await;
 
     let candle_data = res.unwrap_or_else(|_| Vec::new());
     if candle_data.len() == 0 {
         return Ok(());
     }
-    info!("candle_data: {:?}", candle_data);
 
     //Iterate the candle data and load the tracker with the results
 
     // Calculate and display momentum
     tracker.print_momentum_report();
 
-    println!("\n--- Simulating real-time updates ---");
-
-    // Simulate a few real-time updates
-    for i in 0..5 {
-        println!("\nUpdate {}:", i + 1);
-
-        // Simulate new price data
-        let last_price = tracker.get_current_price().unwrap_or(65000.0);
-        let volatility = 0.005; // Higher volatility for demo
-        let new_price = last_price * (1.0 + (rand::random::<f64>() - 0.5) * volatility);
-        let new_volume = 20_000_000.0 + (rand::random::<f64>() * 15_000_000.0);
-
-        tracker.add_data_point(new_price, new_volume);
-        tracker.print_momentum_report();
-
-        std::thread::sleep(std::time::Duration::from_secs(1));
-    }
-
     Ok(())
 }
 
 // Additional utility functions
 
-impl MomentumIndicators {
-    /// Formats the momentum indicators for display
-    pub fn format_report(&self) -> String {
-        format!(
-            "RSI: {:.1} | MACD: {:.4} | Momentum: {:.2}% | Volume: {:.2}x | Signal: {:?}",
-            self.rsi,
-            self.macd.histogram,
-            self.price_momentum,
-            self.volume_ratio,
-            self.overall_signal
-        )
-    }
+// impl MomentumIndicators {
+//     /// Formats the momentum indicators for display
+//     pub fn format_report(&self) -> String {
+//         format!(
+//             "RSI: {:.1} | MACD: {:.4} | Momentum: {:.2}% | Volume: {:.2}x | Signal: {:?}",
+//             self.rsi,
+//             self.macd.histogram,
+//             self.price_momentum,
+//             self.volume_ratio,
+//             self.overall_signal
+//         )
+//     }
 
-    /// Checks if momentum is strongly bullish
-    pub fn is_strong_bullish(&self) -> bool {
-        matches!(self.overall_signal, MomentumSignal::Bullish)
-            && self.price_momentum > 1.5
-            && self.volume_ratio > 1.2
-    }
+//     /// Checks if momentum is strongly bullish
+//     pub fn is_strong_bullish(&self) -> bool {
+//         matches!(self.overall_signal, MomentumSignal::Bullish)
+//             && self.price_momentum > 1.5
+//             && self.volume_ratio > 1.2
+//     }
 
-    /// Checks if momentum is strongly bearish
-    pub fn is_strong_bearish(&self) -> bool {
-        matches!(self.overall_signal, MomentumSignal::Bearish)
-            && self.price_momentum < -1.5
-            && self.volume_ratio > 1.2
-    }
-}
+//     /// Checks if momentum is strongly bearish
+//     pub fn is_strong_bearish(&self) -> bool {
+//         matches!(self.overall_signal, MomentumSignal::Bearish)
+//             && self.price_momentum < -1.5
+//             && self.volume_ratio > 1.2
+//     }
+// }
 
 impl PriceData {
     pub fn new(price: f64, volume: f64) -> Self {
@@ -591,30 +551,164 @@ impl PriceData {
     }
 }
 
-// WebSocket integration example (commented out - would require tokio and websocket crates)
-/*
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use futures_util::{StreamExt, SinkExt};
+// Bitget Tickers Channel response structures
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct BitgetTickerResponse {
+    //pub action: Option<String>,
+    // pub arg: Option<BitgetTickerArg>,
+    pub data: Option<Vec<BitgetTickerData>>,
+    pub event: Option<String>,
+    // pub code: Option<String>,
+    pub msg: Option<String>,
+}
 
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BitgetTickerArg {
+    // pub inst_type: String,
+    // pub channel: String,
+    // pub inst_id: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BitgetTickerData {
+    // inst_id: String,
+    last_pr: String,
+    // bid_pr: String,
+    // ask_pr: String,
+    // bid_sz: String,
+    // ask_sz: String,
+    // open_24h: String,
+    // high_24h: String,
+    // low_24h: String,
+    // change_24h: String,
+    // funding_rate: String,
+    // next_funding_time: String,
+    // mark_price: String,
+    // index_price: String,
+    // holding_amount: String,
+    base_volume: String,
+    // quote_volume: String,
+    // open_utc: String,
+    // symbol_type: String,
+    // symbol: String,
+    // delivery_price: String,
+    // ts: String,
+}
+
+/// Starts live tracking of Bitcoin momentum via Bitget Tickers Channel websocket
 pub async fn start_live_tracking() -> Result<(), Box<dyn std::error::Error>> {
-    let mut tracker = BitcoinMomentumTracker::new(288); // 24 hours of 5-min data
+    let mut tracker = BitcoinMomentumTracker::new(672);
+    // 24 hours of 5-min data (12 counts of 5mins, 12 * 24 = 288)
+    // 168hours of 15-min data (4 counts of 15mins, 4 * 168 = 672)
 
-    // Connect to Binance WebSocket
-    let url = "wss://stream.binance.com:9443/ws/btcusdt@kline_5m";
+    // Connect to Bitget WebSocket
+    let url = "wss://ws.bitget.com/v2/ws/public";
+    info!("Connecting to Bitget WebSocket: {}", url);
+
     let (ws_stream, _) = connect_async(url).await?;
     let (mut write, mut read) = ws_stream.split();
 
-    while let Some(message) = read.next().await {
-        match message? {
-            Message::Text(data) => {
-                // Parse Binance kline data and update tracker
-                // This would require serde_json for JSON parsing
-                println!("Received: {}", data);
+    // Subscribe to Tickers Channel for BTCUSDT futures
+    let subscribe_msg = serde_json::json!({
+        "op": "subscribe",
+        "args": [{
+            "instType": "USDT-FUTURES",
+            "channel": "ticker",
+            "instId": "BTCUSDT"
+        }]
+    });
+
+    info!("Sending subscription message: {}", subscribe_msg);
+    write
+        .send(Message::Text(subscribe_msg.to_string().into()))
+        .await?;
+
+    // Set up ping interval to keep connection alive (Bitget requires ping every 30s)
+    let ping_interval = std::time::Duration::from_secs(25);
+    let mut last_ping = std::time::Instant::now();
+
+    loop {
+        // Send ping if needed
+        if last_ping.elapsed() >= ping_interval {
+            write.send(Message::Text("ping".to_string().into())).await?;
+            last_ping = std::time::Instant::now();
+            info!("Sent ping to keep connection alive");
+        }
+
+        // Use tokio timeout to allow periodic ping checks
+        let msg_result = tokio::time::timeout(std::time::Duration::from_secs(5), read.next()).await;
+
+        match msg_result {
+            Ok(Some(message)) => {
+                match message? {
+                    Message::Text(data) => {
+                        // Handle pong response
+                        if data == "pong" {
+                            info!("Received pong");
+                            continue;
+                        }
+
+                        // Parse ticker data
+                        match serde_json::from_str::<BitgetTickerResponse>(&data) {
+                            Ok(response) => {
+                                // Handle subscription confirmation
+                                if let Some(event) = &response.event {
+                                    if event == "subscribe" {
+                                        info!("Successfully subscribed to Tickers Channel");
+                                        continue;
+                                    }
+                                    if event == "error" {
+                                        info!("Subscription error: {:?}", response.msg);
+                                        continue;
+                                    }
+                                }
+
+                                // Process ticker data
+                                if let Some(ticker_data) = response.data {
+                                    for ticker in ticker_data {
+                                        let price: f64 = ticker.last_pr.parse().unwrap_or(0.0);
+                                        let volume: f64 = ticker.base_volume.parse().unwrap_or(0.0);
+
+                                        if price > 0.0 {
+                                            tracker.add_data_point(price, volume);
+
+                                            // Print momentum report periodically
+                                            if tracker.price_history.len() % 10 == 0 {
+                                                tracker.print_momentum_report();
+                                            } else {
+                                                // info!(
+                                                //     "BTCUSDT Price: ${:.2} | Volume: {:.2} | 24h Change: {}%",
+                                                //     price, volume, ticker.change_24h
+                                                // );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                info!("Failed to parse ticker response: {} - Raw: {}", e, data);
+                            }
+                        }
+                    }
+                    Message::Close(_) => {
+                        info!("WebSocket connection closed");
+                        break;
+                    }
+                    _ => {}
+                }
             }
-            _ => {}
+            Ok(None) => {
+                info!("WebSocket stream ended");
+                break;
+            }
+            Err(_) => {
+                // Timeout - continue to allow ping check
+                continue;
+            }
         }
     }
 
     Ok(())
 }
-*/
