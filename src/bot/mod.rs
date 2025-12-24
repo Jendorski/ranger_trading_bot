@@ -11,14 +11,16 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::exchange::Exchange;
 use crate::exchange::HttpExchange;
+use crate::exchange::bitget::BitgetWsClient;
 use crate::exchange::bitget::PlaceOrderData;
+use crate::graph::Graph;
 use crate::helper::TRADING_BOT_LOSS_COUNT;
 use crate::helper::TRADING_PARTIAL_PROFIT_TARGET;
 use crate::helper::{
     Helper, PartialProfitTarget, TRADING_BOT_ACTIVE, TRADING_BOT_CLOSE_POSITIONS,
     TRADING_BOT_POSITION, TRADING_BOT_ZONES, TRADING_CAPITAL,
 };
-use crate::trackers::smart_money_concepts::SmcEngine;
+use futures_util::StreamExt;
 
 //pub mod scalper;
 
@@ -350,7 +352,7 @@ pub struct Bot<'a> {
     //pub default_zone: Zone,
     pub loss_count: usize,
 
-    pub smc: SmcEngine,
+    //pub smc: SmcEngine,
 
     // a *mutable* reference to the redis connection
     redis_conn: redis::aio::MultiplexedConnection,
@@ -387,7 +389,7 @@ impl<'a> Bot<'a> {
 
         let loss_count = Self::load_loss_count(&mut conn).await.unwrap_or_else(|_| 0);
 
-        let smc = SmcEngine::new(3, 3);
+        //let smc = SmcEngine::new(3, 3);
 
         Ok(Self {
             pos,
@@ -398,7 +400,7 @@ impl<'a> Bot<'a> {
             current_margin,
             partial_profit_target,
             loss_count,
-            smc,
+            //smc,
         })
     }
 
@@ -1117,7 +1119,7 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
-    pub async fn run_cycle(&mut self, price: f64, exchange: &dyn Exchange) -> Result<()> {
+    async fn run_cycle(&mut self, price: f64, exchange: &dyn Exchange) -> Result<()> {
         if price == 1.11 {
             warn!("Price failure! -> {:?}", price);
             return Ok(());
@@ -1258,6 +1260,53 @@ impl<'a> Bot<'a> {
             }
         }
         self.store_position(self.pos, self.open_pos.clone()).await?;
+        Ok(())
+    }
+
+    pub async fn start_live_trading(&mut self, exchange: &dyn Exchange) -> Result<()> {
+        info!("Starting Ranger live trading via WebSocket...");
+
+        let mut ticker_stream = BitgetWsClient::subscribe_tickers("USDT-FUTURES", "BTCUSDT")
+            .await
+            .map_err(|e| anyhow!("Failed to subscribe to tickers: {}", e))?;
+
+        let mut graph = Graph::new();
+        let mut last_midnight_check = Utc::now();
+
+        while let Some(msg) = ticker_stream.next().await {
+            match msg {
+                std::result::Result::Ok(ticker) => {
+                    let price: f64 = ticker.last_pr.parse().unwrap_or(0.0);
+
+                    if price > 0.0 {
+                        info!("Ticker Price = {:.2}", price);
+                        if let Err(e) = self.run_cycle(price, exchange).await {
+                            log::error!("Error during trading cycle: {}", e);
+                        }
+                    }
+
+                    // Periodic cumulative stats check (midnight)
+                    if Utc::now().date_naive() != last_midnight_check.date_naive()
+                        && Helper::is_midnight()
+                    {
+                        warn!("It's midnight now! Processing weekly/monthly stats...");
+                        if let Err(e) = Graph::prepare_cumulative_weekly_monthly(
+                            &mut graph,
+                            self.redis_conn.clone(),
+                        )
+                        .await
+                        {
+                            log::error!("Failed to process cumulative stats: {}", e);
+                        }
+                        last_midnight_check = Utc::now();
+                    }
+                }
+                std::result::Result::Err(e) => {
+                    log::error!("WebSocket ticker stream error: {}", e);
+                }
+            }
+        }
+
         Ok(())
     }
 }

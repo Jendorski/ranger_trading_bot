@@ -12,6 +12,7 @@ tokio-cron-scheduler = "*"
 #Websockets
 tokio-tungstenite = { version = "0.28.0", features = ["native-tls"] }
 futures-util = "0.3"
+async-stream = "0.3"
 url = "2"
 
 #JSON

@@ -2,13 +2,15 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use std::collections::HashMap;
 
-use anyhow::{Ok, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
-use log::info;
+use futures_util::{SinkExt, StreamExt};
+use log::{error, info};
 use reqwest::{Client, header::HeaderMap};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
 use crate::{
     bot::{OpenPosition, Position},
@@ -147,13 +149,6 @@ pub trait FuturesCall {
     /// Return the latest candles
     async fn new_futures_call(&self, open_position: OpenPosition) -> Result<PlaceOrderData>;
 
-    fn return_bitget_headers(&self, method: &str, url: &str, body: &str) -> Result<HeaderMap>;
-
-    fn return_bitget_request_body(
-        &self,
-        open_position: OpenPosition,
-    ) -> Result<HashMap<std::string::String, std::string::String>>;
-
     async fn modify_futures_order(&self, open_position: OpenPosition) -> Result<PlaceOrderData>;
 }
 
@@ -207,46 +202,6 @@ impl FuturesCall for HttpCandleData {
         }
     }
 
-    fn return_bitget_request_body(
-        &self,
-        open_position: OpenPosition,
-    ) -> Result<HashMap<std::string::String, std::string::String>> {
-        let mut side: &str = "buy";
-
-        let pos_size = open_position.position_size.to_string();
-
-        let entry_price = open_position.entry_price.to_string();
-
-        let client_order_id = open_position.id.to_string();
-
-        // let preset_stop_loss_price = open_position.sl.unwrap().to_string();
-
-        // let preset_take_profit_price = open_position.tp.unwrap().to_string();
-
-        if open_position.pos == Position::Long {
-            side = "buy";
-        }
-
-        if open_position.pos == Position::Short {
-            side = "sell";
-        }
-
-        let mut req_body: HashMap<String, String> = HashMap::<String, String>::new();
-
-        req_body.insert(String::from("symbol"), String::from("BTCUSDT"));
-        req_body.insert(String::from("side"), String::from(side));
-        req_body.insert(String::from("orderType"), String::from("limit"));
-        req_body.insert(String::from("size"), String::from(&pos_size));
-        req_body.insert(String::from("price"), String::from(&entry_price));
-        req_body.insert(String::from("timeInForce"), String::from("goodTillCancel"));
-        req_body.insert(String::from("marginMode"), String::from("isolated"));
-        req_body.insert(String::from("productType"), String::from("USDT-FUTURES"));
-        req_body.insert(String::from("marginCoin"), String::from("USDT"));
-        req_body.insert(String::from("clientOid"), String::from(&client_order_id));
-
-        Ok(req_body)
-    }
-
     async fn modify_futures_order(&self, open_position: OpenPosition) -> Result<PlaceOrderData> {
         let api_key = &self.config.api_key;
         let secret = &self.config.api_secret;
@@ -256,8 +211,8 @@ impl FuturesCall for HttpCandleData {
         let path = "/api/v2/mix/order/modify-order";
         let method = "POST";
 
-        let preset_stop_surplus_price = open_position.tp.unwrap().to_string();
-        let preset_stop_loss_price = open_position.sl.unwrap().to_string();
+        let preset_stop_surplus_price = Helper::truncate_to_1_dp(open_position.tp.unwrap_or(0.00));
+        let preset_stop_loss_price = Helper::truncate_to_1_dp(open_position.sl.unwrap_or(0.00));
 
         let size = open_position.position_size.to_string();
 
@@ -333,44 +288,6 @@ impl FuturesCall for HttpCandleData {
         let order_data = response.data;
 
         Ok(order_data)
-    }
-
-    fn return_bitget_headers(&self, method: &str, url: &str, body: &str) -> Result<HeaderMap> {
-        let mut headers = HeaderMap::new();
-
-        let config = Config::from_env()?;
-
-        let timestamp = Utc::now().timestamp_millis().to_string();
-        let concat_string = format!("{}{}{}{}", timestamp, method, url, body);
-        info!("concat_string: {:?}", concat_string);
-
-        let key = config.api_secret.as_bytes();
-        // Create the HMAC-SHA256 hasher with the key
-        let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC can take key of any size");
-
-        // Input the message
-        mac.update(timestamp.as_bytes());
-
-        // 3. Finalize the HMAC calculation to get the raw signature bytes
-        let result = mac.finalize();
-
-        let signature_bytes = result.into_bytes();
-
-        // 4. Base64 encode the resulting bytes into a printable string
-        let base64_encoded_signature = base64::encode(&signature_bytes);
-
-        headers.insert("ACCESS-KEY", config.api_key.parse().unwrap());
-        headers.insert("ACCESS-SIGN", base64_encoded_signature.parse().unwrap());
-        headers.insert("ACCESS-PASSPHRASE", config.passphrase.parse().unwrap());
-        headers.insert(
-            "ACCESS-TIMESTAMP",
-            Utc::now().timestamp_millis().to_string().parse().unwrap(),
-        );
-        headers.insert("Content-Type", "application/json".parse().unwrap());
-        headers.insert("locale", "english".parse().unwrap());
-        info!("headers: {:?}", headers);
-
-        Ok(headers)
     }
 
     async fn new_futures_call(&self, open_position: OpenPosition) -> Result<PlaceOrderData> {
@@ -512,6 +429,111 @@ pub fn get_prices(json: &str) -> Option<Prices> {
         .and_then(|mut prices| prices.pop());
 }
 
+// WebSocket Tickers Channel Types
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WsTickerResponse {
+    pub action: String,
+    pub arg: WsTickerArg,
+    pub data: Vec<WsTickerData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WsTickerArg {
+    pub inst_type: String,
+    pub channel: String,
+    pub inst_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WsTickerData {
+    pub inst_id: String,
+    pub last_pr: String,
+    pub bid_pr: String,
+    pub ask_pr: String,
+    pub bid_sz: String,
+    pub ask_sz: String,
+    pub high24h: String,
+    pub low24h: String,
+    pub base_volume: String,
+    pub quote_volume: String,
+    pub open_utc: String,
+    pub symbol_type: String,
+    pub symbol: String,
+    pub ts: String,
+}
+
+pub struct BitgetWsClient;
+
+impl BitgetWsClient {
+    pub async fn subscribe_tickers(
+        inst_type: &str,
+        inst_id: &str,
+    ) -> Result<impl futures_util::Stream<Item = Result<WsTickerData>>, Box<dyn std::error::Error>>
+    {
+        let url = "wss://ws.bitget.com/v2/ws/public";
+        info!("Connecting to Bitget WebSocket: {}", url);
+
+        let (ws_stream, _) = connect_async(url).await?;
+        let (mut write, mut read) = ws_stream.split();
+
+        let subscribe_msg = json!({
+            "op": "subscribe",
+            "args": [{
+                "instType": inst_type,
+                "channel": "ticker",
+                "instId": inst_id
+            }]
+        });
+
+        write
+            .send(Message::Text(subscribe_msg.to_string().into()))
+            .await?;
+
+        let stream = async_stream::try_stream! {
+            let mut last_ping = std::time::Instant::now();
+            let ping_interval = std::time::Duration::from_secs(25);
+
+            loop {
+                if last_ping.elapsed() >= ping_interval {
+                    if let Err(e) = write.send(Message::Text("ping".to_string().into())).await {
+                        error!("Failed to send ping: {}", e);
+                        break;
+                    }
+                    last_ping = std::time::Instant::now();
+                }
+
+                let msg_result = tokio::time::timeout(std::time::Duration::from_secs(1), read.next()).await;
+
+                match msg_result {
+                    std::result::Result::Ok(Some(std::result::Result::Ok(Message::Text(text)))) => {
+                        if text == "pong" {
+                            continue;
+                        }
+
+                        if let std::result::Result::Ok(response) = serde_json::from_str::<WsTickerResponse>(&text) {
+                            for ticker in response.data {
+                                yield ticker;
+                            }
+                        }
+                    }
+                    std::result::Result::Ok(Some(std::result::Result::Ok(Message::Close(_)))) => break,
+                    std::result::Result::Ok(Some(std::result::Result::Err(e))) => {
+                        error!("WS error: {}", e);
+                        break;
+                    }
+                    std::result::Result::Ok(None) => break,
+                    std::result::Result::Err(_) => continue, // Timeout, check ping
+                    _ => continue,
+                }
+            }
+        };
+
+        std::result::Result::Ok(Box::pin(stream))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -544,5 +566,41 @@ mod tests {
         assert_eq!(all_prices.len(), 2);
         // assert_eq!(all_prices[0].price, 108895.8);
         // assert_eq!(all_prices[1].price, 2500.5);
+    }
+
+    #[test]
+    fn test_parse_ws_ticker_response() {
+        let json = r#"{
+            "action": "snapshot",
+            "arg": {
+                "instType": "USDT-FUTURES",
+                "channel": "ticker",
+                "instId": "BTCUSDT"
+            },
+            "data": [
+                {
+                    "instId": "BTCUSDT",
+                    "lastPr": "100000.5",
+                    "bidPr": "100000.4",
+                    "askPr": "100000.6",
+                    "bidSz": "1.2",
+                    "askSz": "0.5",
+                    "high24h": "105000",
+                    "low24h": "95000",
+                    "baseVolume": "1.2",
+                    "quoteVolume": "120000",
+                    "openUtc": "100000",
+                    "symbolType": "perpetual",
+                    "symbol": "BTCUSDT",
+                    "ts": "1620000000000"
+                }
+            ]
+        }"#;
+
+        let response: WsTickerResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.action, "snapshot");
+        assert_eq!(response.arg.inst_id, "BTCUSDT");
+        assert_eq!(response.data[0].last_pr, "100000.5");
+        assert_eq!(response.data[0].ts, "1620000000000");
     }
 }

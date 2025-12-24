@@ -1,16 +1,11 @@
+use std::error::Error;
 use std::sync::Arc;
-use std::{error::Error, time::Duration};
 
-use log::{info, warn};
-use redis::aio::MultiplexedConnection;
-use tokio::time;
+use log::info;
 
 use crate::cache::RedisClient;
 use crate::config::Config;
-use crate::exchange::{Exchange, HttpExchange};
-use crate::graph::Graph;
-use crate::helper::Helper;
-use crate::trackers::momentum;
+use crate::exchange::HttpExchange;
 
 mod bot;
 mod cache;
@@ -20,39 +15,6 @@ mod exchange;
 mod graph;
 mod helper;
 mod trackers;
-
-async fn run_bot(
-    redis_conn: &mut MultiplexedConnection,
-    bot: &mut bot::Bot<'_>,
-    exchange: Arc<HttpExchange>,
-    cfg: Config,
-) -> Result<(), Box<dyn Error>> {
-    let mut graph = graph::Graph::new();
-
-    // 4️⃣ Poll loop
-    let mut interval = time::interval(Duration::from_secs(cfg.poll_interval_secs));
-
-    loop {
-        interval.tick().await;
-
-        match exchange.get_current_price().await {
-            Ok(price) => {
-                info!("Price = {:.2}", price,);
-                if let Err(e) = //bot.test().await
-                    bot.run_cycle(price, exchange.as_ref()).await
-                {
-                    eprintln!("Error during cycle: {e}");
-                }
-            }
-            Err(err) => eprintln!("Failed to fetch price: {err}"),
-        }
-
-        if Helper::is_midnight() {
-            warn!("It's midnight now!");
-            Graph::prepare_cumulative_weekly_monthly(&mut graph, redis_conn.clone()).await?;
-        }
-    }
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -66,7 +28,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // 1️⃣ Load config
     let cfg = Config::from_env()?;
-    let config_clone = cfg.clone();
 
     let binding = RedisClient::connect(&cfg.redis_url).await?;
     let redis_conn = binding.get_multiplexed_connection();
@@ -91,12 +52,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //     let _: () = momentum::start_live_tracking().await.unwrap();
     // });
 
-    let mut bot_conn = redis_conn.clone();
     info!("Starting bot loop...");
 
-    if let Err(e) = //bot.test().await {
-        run_bot(&mut bot_conn, &mut bot, exchange.clone(), config_clone).await
-    {
+    if let Err(e) = bot.start_live_trading(exchange.as_ref()).await {
         log::error!("Bot loop error: {}", e);
     }
 
