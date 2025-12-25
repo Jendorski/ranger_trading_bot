@@ -768,21 +768,6 @@ async fn smc_main(conn: &mut redis::aio::MultiplexedConnection, timeframe: Strin
         return;
     }
 
-    // For short zones, find the zone with the highest price (maximum high value)
-    // let short_zone = sweep_highs
-    //     .iter()
-    //     .max_by(|a, b| a.high.partial_cmp(&b.high).unwrap())
-    //     .cloned()
-    //     .unwrap_or(Zone {
-    //         low: 0.0,
-    //         high: 0.0,
-    //     });
-
-    // if short_zone.low == 0.0 || short_zone.high == 0.0 {
-    //     info!("No short zone found");
-    //     return;
-    // }
-
     let zones = Zones {
         long_zones,
         short_zones,
@@ -792,8 +777,8 @@ async fn smc_main(conn: &mut redis::aio::MultiplexedConnection, timeframe: Strin
     info!("zones.short_zones: {:?}", zones.short_zones);
 
     // Save the zones to redis
-    // let serialized_zones = serde_json::to_string(&zones).unwrap();
-    // let _: () = conn.set(TRADING_BOT_ZONES, serialized_zones).await.unwrap();
+    let serialized_zones = serde_json::to_string(&zones).unwrap();
+    let _: () = conn.set(TRADING_BOT_ZONES, serialized_zones).await.unwrap();
 
     ()
 }
