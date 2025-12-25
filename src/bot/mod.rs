@@ -6,6 +6,7 @@ use redis::{AsyncCommands, RedisError};
 use serde::{Deserialize, Serialize};
 use std::ops::Div;
 use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -1264,49 +1265,70 @@ impl<'a> Bot<'a> {
     }
 
     pub async fn start_live_trading(&mut self, exchange: &dyn Exchange) -> Result<()> {
-        info!("Starting Ranger live trading via WebSocket...");
+        let mut backoff_secs = 1;
+        let max_backoff = 64;
 
-        let mut ticker_stream = BitgetWsClient::subscribe_tickers("USDT-FUTURES", "BTCUSDT")
-            .await
-            .map_err(|e| anyhow!("Failed to subscribe to tickers: {}", e))?;
+        loop {
+            info!("Connecting to Ranger live trading via WebSocket...");
 
-        let mut graph = Graph::new();
-        let mut last_midnight_check = Utc::now();
+            let ticker_stream_result =
+                BitgetWsClient::subscribe_tickers("USDT-FUTURES", "BTCUSDT").await;
 
-        while let Some(msg) = ticker_stream.next().await {
-            match msg {
-                std::result::Result::Ok(ticker) => {
-                    let price: f64 = ticker.last_pr.parse().unwrap_or(0.0);
+            match ticker_stream_result {
+                std::result::Result::Ok(mut ticker_stream) => {
+                    info!("Successfully connected to Bitget WebSocket");
+                    backoff_secs = 1; // Reset backoff on success
 
-                    if price > 0.0 {
-                        info!("Ticker Price = {:.2}", price);
-                        if let Err(e) = self.run_cycle(price, exchange).await {
-                            log::error!("Error during trading cycle: {}", e);
+                    let mut graph = Graph::new();
+                    let mut last_midnight_check = Utc::now();
+
+                    while let Some(msg) = ticker_stream.next().await {
+                        match msg {
+                            std::result::Result::Ok(ticker) => {
+                                let price: f64 = ticker.last_pr.parse().unwrap_or(0.0);
+
+                                if price > 0.0 {
+                                    info!("Ticker Price = {:.2}", price);
+                                    if let Err(e) = self.run_cycle(price, exchange).await {
+                                        log::error!("Error during trading cycle: {}", e);
+                                    }
+                                }
+
+                                // Periodic cumulative stats check (midnight)
+                                if Utc::now().date_naive() != last_midnight_check.date_naive()
+                                    && Helper::is_midnight()
+                                {
+                                    warn!("It's midnight now! Processing weekly/monthly stats...");
+                                    if let Err(e) = Graph::prepare_cumulative_weekly_monthly(
+                                        &mut graph,
+                                        self.redis_conn.clone(),
+                                    )
+                                    .await
+                                    {
+                                        log::error!("Failed to process cumulative stats: {}", e);
+                                    }
+                                    last_midnight_check = Utc::now();
+                                }
+                            }
+                            std::result::Result::Err(e) => {
+                                log::error!("WebSocket ticker stream error: {}", e);
+                                break; // Break the inner loop to trigger reconnection
+                            }
                         }
                     }
-
-                    // Periodic cumulative stats check (midnight)
-                    if Utc::now().date_naive() != last_midnight_check.date_naive()
-                        && Helper::is_midnight()
-                    {
-                        warn!("It's midnight now! Processing weekly/monthly stats...");
-                        if let Err(e) = Graph::prepare_cumulative_weekly_monthly(
-                            &mut graph,
-                            self.redis_conn.clone(),
-                        )
-                        .await
-                        {
-                            log::error!("Failed to process cumulative stats: {}", e);
-                        }
-                        last_midnight_check = Utc::now();
-                    }
+                    warn!("WebSocket stream closed. Attempting to reconnect...");
                 }
                 std::result::Result::Err(e) => {
-                    log::error!("WebSocket ticker stream error: {}", e);
+                    log::error!(
+                        "Failed to subscribe to tickers: {}. Retrying in {}s...",
+                        e,
+                        backoff_secs
+                    );
                 }
             }
-        }
 
-        Ok(())
+            tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+            backoff_secs = std::cmp::min(backoff_secs * 2, max_backoff);
+        }
     }
 }
