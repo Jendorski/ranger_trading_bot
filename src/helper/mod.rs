@@ -136,7 +136,6 @@ impl Helper {
             return 0.00;
         }
 
-        let mut pl = 0.00;
         let mut pl_diff = 0.00;
 
         if pos == Position::Long {
@@ -152,7 +151,7 @@ impl Helper {
             pl_diff = 0.00
         }
 
-        pl = pl_diff / entry;
+        let pl = pl_diff / entry;
 
         //Wondering why I added leverage here in the first place
         return pl * 100.00; //leverage *
@@ -266,5 +265,19 @@ impl Helper {
         }
 
         targets
+    }
+
+    pub fn funding_multiplier(funding_rate: f64, pos: Position) -> f64 {
+        let scale = 800.0; // Adjust sensitivity
+        let mut multiplier = 1.0;
+
+        if pos == Position::Long {
+            multiplier = 1.0 - (funding_rate * scale);
+        } else if pos == Position::Short {
+            multiplier = 1.0 + (funding_rate * scale);
+        }
+
+        // Clamp between 0.5 and 1.5 to avoid extreme position sizing
+        multiplier.clamp(0.5, 1.5)
     }
 }

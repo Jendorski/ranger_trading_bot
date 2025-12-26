@@ -473,8 +473,9 @@ impl<'a> Bot<'a> {
         entry_price: f64,
         leverage: f64,
         risk_pct: f64,
+        funding_multiplier: f64,
     ) -> OpenPosition {
-        let current_margin = self.current_margin;
+        let current_margin = self.current_margin * funding_multiplier;
         let sl = Helper::stop_loss_price(entry_price, current_margin, leverage, risk_pct, pos);
         let qty = Helper::contract_amount(entry_price, current_margin, leverage);
         let tp = self
@@ -546,7 +547,7 @@ impl<'a> Bot<'a> {
         //update the margin based on the pnl
         let _ = Self::prepare_current_margin(self, pnl).await;
 
-        let _ = self.store_loss_count(pnl).await;
+        //let _ = self.store_loss_count(pnl).await;
 
         //Track loss count
         let total_profit_count = 4;
@@ -672,7 +673,7 @@ impl<'a> Bot<'a> {
         //update the margin based on the pnl
         let _ = Self::prepare_current_margin(self, pnl).await;
 
-        let _ = self.store_loss_count(pnl).await;
+        //let _ = self.store_loss_count(pnl).await;
 
         //Track loss count
         let total_profit_count = 4;
@@ -853,7 +854,7 @@ impl<'a> Bot<'a> {
         //update the margin based on the pnl
         let _ = Self::prepare_current_margin(self, pnl).await;
 
-        let modify_order = exchange.modify_market_order(self.open_pos.clone()).await?;
+        let _ = exchange.modify_market_order(self.open_pos.clone()).await?;
 
         self.open_pos = OpenPosition {
             id: self.open_pos.id,
@@ -1105,7 +1106,7 @@ impl<'a> Bot<'a> {
     }
 
     pub async fn test(&mut self) -> Result<()> {
-        self.open_pos = self.prepare_open_position(Position::Long, 86800.11, 20.0, 0.075);
+        self.open_pos = self.prepare_open_position(Position::Long, 86800.11, 20.0, 0.075, 1.0);
         info!("open_pos: {:?}", self.open_pos);
         //Get the price from the exchange API
         let exchange = Arc::new(HttpExchange {
@@ -1147,6 +1148,13 @@ impl<'a> Bot<'a> {
 
                     self.pos = Position::Long;
 
+                    let funding_rate = exchange.get_funding_rate().await.unwrap_or(0.0);
+                    let funding_multiplier = Helper::funding_multiplier(funding_rate, self.pos);
+                    info!(
+                        "Funding-aware sizing: rate={:.6}, multiplier={:.2}",
+                        funding_rate, funding_multiplier
+                    );
+
                     let _: Result<()> =
                         Self::store_partial_profit_targets(self, price, self.pos).await;
 
@@ -1156,6 +1164,7 @@ impl<'a> Bot<'a> {
                         price,
                         self.config.leverage,
                         self.config.ranger_risk_pct,
+                        funding_multiplier,
                     );
 
                     let exec_price: PlaceOrderData =
@@ -1175,6 +1184,13 @@ impl<'a> Bot<'a> {
 
                     self.pos = Position::Short;
 
+                    let funding_rate = exchange.get_funding_rate().await.unwrap_or(0.0);
+                    let funding_multiplier = Helper::funding_multiplier(funding_rate, self.pos);
+                    info!(
+                        "Funding-aware sizing: rate={:.6}, multiplier={:.2}",
+                        funding_rate, funding_multiplier
+                    );
+
                     let _: Result<()> =
                         Self::store_partial_profit_targets(self, price, self.pos).await;
 
@@ -1184,6 +1200,7 @@ impl<'a> Bot<'a> {
                         price,
                         self.config.leverage,
                         self.config.ranger_risk_pct,
+                        funding_multiplier,
                     );
                     let exec_price: PlaceOrderData =
                         exchange.place_market_order(self.open_pos.clone()).await?;

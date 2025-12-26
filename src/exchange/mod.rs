@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use log::info;
 
 use crate::bot::OpenPosition;
+use crate::exchange::bitget::CandleData;
 use crate::exchange::bitget::FuturesCall;
 use crate::exchange::bitget::HttpCandleData;
 use crate::exchange::bitget::PlaceOrderData;
@@ -26,6 +27,9 @@ pub trait Exchange: Send + Sync {
 
     ///Used for executing taking profits and executing SL
     async fn modify_market_order(&self, open_position: OpenPosition) -> Result<PlaceOrderData>;
+
+    /// Return the latest funding rate as a f64.
+    async fn get_funding_rate(&self) -> Result<f64>;
 }
 
 /// Simple HTTP‑based mock of the `Exchange` trait – replace with your real SDK.
@@ -111,5 +115,16 @@ impl Exchange for HttpExchange {
             .modify_futures_order(open_position)
             .await?;
         Ok(execute_call)
+    }
+
+    async fn get_funding_rate(&self) -> Result<f64, anyhow::Error> {
+        let bitget_data = <HttpCandleData as bitget::CandleData>::new();
+        let funding_rates = bitget_data
+            .get_history_funding_rate("1".to_string())
+            .await?;
+        if let Some(first) = funding_rates.first() {
+            return Ok(first.funding_rate.parse::<f64>().unwrap_or(0.0));
+        }
+        Ok(0.0)
     }
 }

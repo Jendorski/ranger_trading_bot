@@ -58,6 +58,15 @@ pub struct PlaceOrderData {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct FundingRateData {
+    pub symbol: String,
+    #[serde(rename = "fundingRate")]
+    pub funding_rate: String,
+    #[serde(rename = "fundingTime")]
+    pub funding_time: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct OrderDetail {
     pub symbol: String,
     pub size: String,
@@ -140,6 +149,9 @@ pub trait CandleData: Send + Sync {
 
     /// Return the latest candles
     async fn get_bitget_candles(&self, interval: String, limit: String) -> Result<Vec<Candle>>;
+
+    /// Return the historical funding rates
+    async fn get_history_funding_rate(&self, limit: String) -> Result<Vec<FundingRateData>>;
 }
 
 //#[async_trait]
@@ -189,6 +201,23 @@ impl CandleData for HttpCandleData {
         let candles = response.data;
 
         Ok(candles)
+    }
+
+    async fn get_history_funding_rate(&self, limit: String) -> Result<Vec<FundingRateData>> {
+        let url = format!(
+            "https://api.bitget.com/api/v2/mix/market/history-fund-rate?symbol={}&productType=usdt-futures&limit={}",
+            self.symbol, limit
+        );
+
+        let response = self.client.get(url).send().await?;
+        let text = response.text().await?;
+        let api_response: ApiResponse<Vec<FundingRateData>> = serde_json::from_str(&text)?;
+
+        if api_response.code != "00000" {
+            return Err(anyhow::anyhow!("Bitget API error: {}", api_response.msg));
+        }
+
+        Ok(api_response.data)
     }
 }
 
