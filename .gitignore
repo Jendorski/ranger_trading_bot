@@ -22,3 +22,5 @@ target
 
 .env
 Cargo.lock
+
+data/

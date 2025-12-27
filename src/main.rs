@@ -52,6 +52,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //     let _: () = momentum::start_live_tracking().await.unwrap();
     // });
 
+    let _tracker_ichimoku = tokio::spawn(async move {
+        if let Err(e) = trackers::ichimoku::ichimoku_loop().await {
+            log::error!("Ichimoku tracker error: {}", e);
+        }
+    });
+
     info!("Starting bot loop...");
 
     if let Err(e) = bot.start_live_trading(exchange.as_ref()).await {
