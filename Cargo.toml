@@ -1,13 +1,13 @@
 [package]
 name = "btc-trading-bot"
 version = "0.0.1"
-edition = "2024"
+edition = "2021"
 
 # Dependencies ------------------------------------------------------------- cargo build 2>&1 | tail -20
 [dependencies]
 #Schedulers
 tokio          = { version = "1", features = ["full"] }
-tokio-cron-scheduler = "*"
+tokio-cron-scheduler = "0.13.0"
 
 #Websockets
 tokio-tungstenite = { version = "0.28.0", features = ["native-tls"] }

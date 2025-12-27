@@ -1,13 +1,9 @@
-use hmac::Hmac;
-use sha2::Sha256;
-use std::collections::HashMap;
-
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
 use log::{error, info};
-use reqwest::{Client, header::HeaderMap};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
