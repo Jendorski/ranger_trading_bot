@@ -1,17 +1,46 @@
+use crate::exchange::bitget::Candle;
 use crate::{bot::Position, config::Config};
-use chrono::{Local, Timelike};
-use log::info;
+use anyhow::{anyhow, Result};
+use chrono::{Datelike, Duration as ChronoDuration, Local, TimeZone, Timelike, Utc};
+use serde::Deserialize;
+use std::collections::BTreeMap;
+use std::error::Error;
 use std::fmt;
+use std::fs::File;
+use std::path::Path;
 
-pub const TRADING_SCALPER_BOT_ACTIVE: &str = "trading_scalper_bot::active";
-pub const TRADIN_SCALPER_BOT_POSITION: &str = "trading_scalper_bot::position";
-pub const SCALPER_CLOSED_POSITIONS: &str = "scalper_closed_positions";
+#[derive(Debug, Deserialize)]
+struct InputCandle {
+    #[serde(rename = "Timestamp")]
+    timestamp: f64,
+    #[serde(rename = "Open")]
+    open: f64,
+    #[serde(rename = "High")]
+    high: f64,
+    #[serde(rename = "Low")]
+    low: f64,
+    #[serde(rename = "Close")]
+    close: f64,
+    #[serde(rename = "Volume")]
+    volume: f64,
+}
+
+// pub const TRADING_SCALPER_BOT_ACTIVE: &str = "trading_scalper_bot::active";
+// pub const TRADIN_SCALPER_BOT_POSITION: &str = "trading_scalper_bot::position";
+// pub const SCALPER_CLOSED_POSITIONS: &str = "scalper_closed_positions";
 pub const TRADING_BOT_ZONES: &str = "trading_bot:zones";
 pub const TRADING_BOT_POSITION: &str = "trading_bot:position";
 pub const TRADING_BOT_ACTIVE: &str = "trading::active";
 pub const TRADING_BOT_CLOSE_POSITIONS: &str = "closed_positions";
 pub const TRADING_CAPITAL: &str = "trading_capital";
 pub const TRADING_PARTIAL_PROFIT_TARGET: &str = "trading_partial_profit_target";
+pub const TRADING_BOT_LOSS_COUNT: &str = "trading_bot:loss_count";
+pub const TRADING_BOT_SMART_MONEY_CONCEPTS_NEXT_CALL: &str =
+    "trading_bot:smart_money_concepts_next_call";
+pub const TRADING_BOT_RECOMMENDED_CALL: &str = "trading_bot:recommended_call";
+pub const WEEKLY_CANDLES: &'static str = "weekly_candles";
+pub const WEEKLY_ICHIMOKU: &'static str = "weekly_ichimoku";
+pub const LAST_25_WEEKLY_ICHIMOKU_SPANS: &'static str = "last_25_weekly_ichimoku_spans";
 
 pub struct Helper {
     pub config: Config,
@@ -124,7 +153,7 @@ impl Helper {
     }
 
     /// Percentage PnL of a single trade
-    pub fn pnl_percent(entry: f64, exit: f64, leverage: f64, pos: Position) -> f64 {
+    pub fn pnl_percent(entry: f64, exit: f64, pos: Position) -> f64 {
         if !entry.is_finite() || !exit.is_finite() {
             return 0.00;
         }
@@ -133,7 +162,6 @@ impl Helper {
             return 0.00;
         }
 
-        let mut pl = 0.00;
         let mut pl_diff = 0.00;
 
         if pos == Position::Long {
@@ -145,14 +173,18 @@ impl Helper {
         }
 
         if pos == Position::Flat {
-            pl = 0.00;
+            //pl = 0.00;
             pl_diff = 0.00
         }
 
-        pl = pl_diff / entry;
+        let pl = pl_diff / entry;
 
         //Wondering why I added leverage here in the first place
         return pl * 100.00; //leverage *
+    }
+
+    pub fn truncate_to_1_dp(val: f64) -> f64 {
+        (val * 10.0).trunc() / 10.0
     }
 
     pub fn stop_loss_price(
@@ -175,20 +207,6 @@ impl Helper {
         }
 
         0.00
-    }
-
-    pub fn calc_price_difference(entry_price: f64, current_price: f64, pos: Position) -> f64 {
-        if entry_price.is_finite() && current_price.is_finite() {
-            if pos == Position::Long {
-                return current_price - entry_price;
-            }
-
-            if pos == Position::Short {
-                return entry_price - current_price;
-            }
-        }
-
-        return 0.00;
     }
 
     //Function to trigger Stop Loss
@@ -240,7 +258,7 @@ impl Helper {
     ) -> Vec<PartialProfitTarget> {
         let tp_counts: usize = 4;
 
-        let fractions: Option<&[f64]> = Some(&[0.50, 0.25, 0.15, 0.10]);
+        let fractions: Option<&[f64]> = Some(&[0.20, 0.30, 0.30, 0.20]);
 
         let tp_prices = Helper::tp_prices(ranger_price_difference, entry_price, tp_counts, pos);
 
@@ -273,5 +291,153 @@ impl Helper {
         }
 
         targets
+    }
+
+    pub fn funding_multiplier(funding_rate: f64, pos: Position) -> f64 {
+        let scale = 800.0; // Adjust sensitivity
+        let mut multiplier = 1.0;
+
+        if pos == Position::Long {
+            multiplier = 1.0 - (funding_rate * scale);
+        } else if pos == Position::Short {
+            multiplier = 1.0 + (funding_rate * scale);
+        }
+
+        // Clamp between 0.5 and 1.5 to avoid extreme position sizing
+        multiplier.clamp(0.5, 1.5)
+    }
+
+    pub fn extract_into_weekly_candle(path: &str, output_path: &str) -> Result<()> {
+        println!("Reading {}...", path);
+        if !Path::new(path).exists() {
+            return Err(anyhow!("File {} not found", path));
+        }
+
+        let file = File::open(path)?;
+        let mut rdr = csv::Reader::from_reader(file);
+
+        println!("Processing candles...");
+
+        // Map of Week Ending Timestamp -> List of candles in that week
+        // We accumulate aggregate stats directly to avoid storing all candles in memory if possible?
+        // But to get 'first' and 'last', we need to know order.
+        // The input is presumed sorted by timestamp?
+        // If not, we should store them.
+        // Given the Python script loads all into DF, memory isn't a huge constraint (385MB file).
+        // Storing structs might take ~4-500MB.
+        // Let's store intermediate aggregates per week.
+
+        struct WeeklyAgg {
+            min_ts: i64,
+            max_ts: i64,
+            open: f64,  // Open of candle with min_ts
+            close: f64, // Close of candle with max_ts
+            high: f64,
+            low: f64,
+            volume: f64,
+            quote_volume: f64,
+        }
+
+        let mut weekly_data: BTreeMap<i64, WeeklyAgg> = BTreeMap::new();
+
+        for result in rdr.deserialize() {
+            let record: InputCandle = result?;
+
+            // Convert timestamp (f64) to i64
+            let ts_i64 = record.timestamp as i64;
+
+            // Convert timestamp to UTC DateTime
+            // Handle potential errors if timestamp is invalid? assuming valid.
+            let dt = Utc.timestamp_opt(ts_i64, 0).unwrap();
+
+            // Find the "Weekly" bin (Sunday)
+            // Pandas 'W' (Weekly, Sunday). Alignment is typically End of Week (Sunday).
+            // Timestamps on Sunday belong to that Sunday.
+            // Timestamps on Mon-Sat belong to next Sunday.
+
+            // number_from_monday: Mon=1, Sun=7.
+            // If Sun(7): 7-7=0. Add 0 days. Target = Today.
+            // If Mon(1): 7-1=6. Add 6 days. Target = Next Sunday.
+            let days_until_sunday = (7 - dt.weekday().number_from_monday()) % 7;
+            let target_date = dt.date_naive() + ChronoDuration::days(days_until_sunday as i64);
+
+            let bin_dt = Utc.from_utc_datetime(&target_date.and_hms_opt(0, 0, 0).unwrap());
+            let bin_ts = bin_dt.timestamp();
+
+            let quote_vol = record.volume * record.close;
+
+            weekly_data
+                .entry(bin_ts)
+                .and_modify(|agg| {
+                    // Update High/Low/Vol
+                    if record.high > agg.high {
+                        agg.high = record.high;
+                    }
+                    if record.low < agg.low {
+                        agg.low = record.low;
+                    }
+                    agg.volume += record.volume;
+                    agg.quote_volume += quote_vol;
+
+                    // Update Open if this record is earlier
+                    if ts_i64 < agg.min_ts {
+                        agg.min_ts = ts_i64;
+                        agg.open = record.open;
+                    }
+
+                    // Update Close if this record is later
+                    if ts_i64 > agg.max_ts {
+                        agg.max_ts = ts_i64;
+                        agg.close = record.close;
+                    }
+                })
+                .or_insert(WeeklyAgg {
+                    min_ts: ts_i64,
+                    max_ts: ts_i64,
+                    open: record.open,
+                    close: record.close,
+                    high: record.high,
+                    low: record.low,
+                    volume: record.volume,
+                    quote_volume: quote_vol,
+                });
+        }
+
+        println!(
+            "Resampling to weekly... ({} weeks found)",
+            weekly_data.len()
+        );
+        println!("Saving to {}...", output_path);
+
+        let output_file = File::create(output_path)?;
+        let mut wtr = csv::Writer::from_writer(output_file);
+
+        for (ts, agg) in weekly_data {
+            wtr.serialize(Candle {
+                timestamp: ts,
+                open: agg.open,
+                high: agg.high,
+                low: agg.low,
+                close: agg.close,
+                volume: agg.volume,
+                quote_volume: agg.quote_volume,
+            })?;
+        }
+
+        wtr.flush()?;
+        println!("Transformation complete!");
+
+        Ok(())
+    }
+
+    pub fn read_candles_from_csv(file_path: &str) -> Result<Vec<Candle>, Box<dyn Error>> {
+        let file = File::open(file_path)?;
+        let mut rdr = csv::Reader::from_reader(file);
+        let mut candles = Vec::new();
+        for result in rdr.deserialize() {
+            let candle: Candle = result?;
+            candles.push(candle);
+        }
+        Ok(candles)
     }
 }

@@ -1,22 +1,29 @@
-use anyhow::Result;
 use anyhow::anyhow;
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use log::{info, warn};
 use redis::{AsyncCommands, RedisError};
 use serde::{Deserialize, Serialize};
 use std::ops::Div;
-use std::result::Result::Ok;
+use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
 
 use crate::config::Config;
-use crate::exchange::{Exchange, OrderSide};
+use crate::exchange::bitget::BitgetWsClient;
+use crate::exchange::bitget::PlaceOrderData;
+use crate::exchange::Exchange;
+use crate::exchange::HttpExchange;
+use crate::graph::Graph;
+use crate::helper::TRADING_BOT_LOSS_COUNT;
 use crate::helper::TRADING_PARTIAL_PROFIT_TARGET;
 use crate::helper::{
     Helper, PartialProfitTarget, TRADING_BOT_ACTIVE, TRADING_BOT_CLOSE_POSITIONS,
     TRADING_BOT_POSITION, TRADING_BOT_ZONES, TRADING_CAPITAL,
 };
+use futures_util::StreamExt;
 
-pub mod scalper;
+//pub mod scalper;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Zone {
@@ -29,6 +36,18 @@ impl Zone {
     #[inline]
     pub fn contains(&self, price: f64) -> bool {
         price >= self.low && price <= self.high
+    }
+
+    #[inline]
+    pub fn midpoint(&self) -> f64 {
+        (self.low + self.high) / 2.0
+    }
+
+    #[inline]
+    pub fn overlaps_or_too_close(&self, other: &Zone, min_distance: f64) -> bool {
+        // Check if zones overlap or are closer than min_distance
+        let distance = (self.midpoint() - other.midpoint()).abs();
+        distance < min_distance
     }
 }
 
@@ -53,42 +72,13 @@ impl Default for Zones {
                     high: 80_102.80,
                 },
                 Zone {
-                    low: 83_714.866725,
-                    high: 83_777.7,
+                    low: 83_991.80,
+                    high: 84_092.80,
                 },
-                // Zone {
-                //     low: 85_301.80,
-                //     high: 85_402.80,
-                // },
-                // Zone {
-                //     low: 89_301.80,
-                //     high: 89_402.80,
-                // },
-                // Zone {
-                //     low: 91_106.80,
-                //     high: 91_134.80,
-                // },
-                // Zone {
-                //     low: 93_030.10,
-                //     high: 93_179.60,
-                // },
-                // Zone {
-                //     low: 99_079.40,
-                //     high: 99_299.00,
-                // },
-                // //These zones are chop city
-                // // Zone {
-                // //     low: 102_979.9,
-                // //     high: 103_057.8,
-                // // },
-                // // Zone {
-                // //     low: 106_496.8,
-                // //     high: 106_596.8,
-                // // },
-                // Zone {
-                //     low: 105_118.9,
-                //     high: 105_240.10,
-                // },
+                Zone {
+                    low: 86_401.80,
+                    high: 86_602.80,
+                },
                 Zone {
                     low: 109_018.9,
                     high: 109_122.8,
@@ -179,38 +169,21 @@ impl Default for Zones {
                     low: 104_511.00,
                     high: 104_596.30,
                 },
-                //These zones are chop city
-                // Zone {
-                //     low: 106_384.0,
-                //     high: 106_484.0,
-                // },
-                // Zone {
-                //     low: 102_801.0,
-                //     high: 102_850.0,
-                // },
                 Zone {
                     low: 98_030.10,
                     high: 98_079.60,
                 },
                 Zone {
-                    low: 93_630.10,
-                    high: 93_679.60,
+                    low: 93_930.10,
+                    high: 94_079.60,
                 },
                 Zone {
                     low: 92_630.10,
                     high: 92_679.60,
                 },
-                // Zone {
-                //     low: 89_906.80,
-                //     high: 90_008.60,
-                // },
-                // Zone {
-                //     low: 84_906.80,
-                //     high: 85_098.60,
-                // },
                 Zone {
-                    low: 79_806.80,
-                    high: 80_098.60,
+                    low: 89_906.80,
+                    high: 90_008.60,
                 },
                 Zone {
                     low: 73_906.80,
@@ -237,7 +210,7 @@ impl Position {
         }
     }
 }
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClosedPosition {
     pub id: uuid::Uuid,
     pub position: Option<Position>,
@@ -255,6 +228,7 @@ pub struct ClosedPosition {
     pub roi: Option<f64>,
     pub leverage: Option<f64>,
     pub margin: Option<f64>,
+    pub order_id: Option<String>,
 }
 
 impl ClosedPosition {
@@ -263,7 +237,7 @@ impl ClosedPosition {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenPosition {
     pub id: Uuid,         // unique identifier
     pub pos: Position,    // Long / Short
@@ -271,11 +245,13 @@ pub struct OpenPosition {
     pub position_size: f64,
     #[serde(with = "chrono::serde::ts_milliseconds")] // store as epoch ms
     pub entry_time: DateTime<Utc>, // UTC timestamp of entry
+    pub tp: Option<f64>,
     pub sl: Option<f64>,
     pub margin: Option<f64>,
     pub quantity: Option<f64>,
     pub leverage: Option<f64>,
     pub risk_pct: Option<f64>,
+    pub order_id: Option<String>,
 }
 
 impl OpenPosition {
@@ -290,11 +266,13 @@ impl OpenPosition {
             entry_price: 0.00,
             entry_time: Utc::now(),
             position_size: 0.015,
+            tp: Some(0.00),
             sl: Some(0.00),
             margin: Some(50.00),
             quantity: Some(0.015),
             risk_pct: Some(0.05),
             leverage: Some(35.00),
+            order_id: Some("".to_string()),
         }
     }
 
@@ -330,7 +308,10 @@ pub struct Bot<'a> {
 
     pub zones: Zones,
 
-    pub default_zone: Zone,
+    //pub default_zone: Zone,
+    pub loss_count: usize,
+
+    //pub smc: SmcEngine,
 
     // a *mutable* reference to the redis connection
     redis_conn: redis::aio::MultiplexedConnection,
@@ -340,8 +321,6 @@ pub struct Bot<'a> {
     current_margin: f64,
 
     partial_profit_target: Vec<PartialProfitTarget>,
-
-    pub zone: Zone,
 }
 
 impl<'a> Bot<'a> {
@@ -367,10 +346,9 @@ impl<'a> Bot<'a> {
             .await
             .unwrap_or_else(|_| [].to_vec());
 
-        let default_zone = Zone {
-            high: 0.00,
-            low: 0.00,
-        };
+        let loss_count = Self::load_loss_count(&mut conn).await.unwrap_or_else(|_| 0);
+
+        //let smc = SmcEngine::new(3, 3);
 
         Ok(Self {
             pos,
@@ -380,9 +358,16 @@ impl<'a> Bot<'a> {
             config,
             current_margin,
             partial_profit_target,
-            default_zone,
-            zone: default_zone,
+            loss_count,
+            //smc,
         })
+    }
+
+    async fn load_loss_count(conn: &mut redis::aio::MultiplexedConnection) -> Result<usize> {
+        let opt: Option<String> = conn.get(TRADING_BOT_LOSS_COUNT).await?;
+
+        let u = serde_json::from_str::<usize>(&opt.unwrap_or("0".to_string()));
+        Ok(u.unwrap_or_else(|_| 0))
     }
 
     async fn load_partial_profit_target(
@@ -440,32 +425,46 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
-    pub fn prepare_open_position(
+    fn prepare_open_position(
         &mut self,
         pos: Position,
         entry_price: f64,
         leverage: f64,
         risk_pct: f64,
+        funding_multiplier: f64,
     ) -> OpenPosition {
-        let current_margin = self.current_margin;
+        let current_margin = self.current_margin * funding_multiplier;
         let sl = Helper::stop_loss_price(entry_price, current_margin, leverage, risk_pct, pos);
         let qty = Helper::contract_amount(entry_price, current_margin, leverage);
+        let tp = self
+            .partial_profit_target
+            .last()
+            .unwrap_or(&PartialProfitTarget {
+                target_price: 1.11,
+                fraction: 0.0,
+                sl: 1.11,
+            })
+            .target_price;
         OpenPosition {
             id: Uuid::new_v4(),
             pos: pos,
             entry_price: entry_price,
             position_size: qty, //does the same thing as quantity :(
             entry_time: Utc::now(),
+            tp: Some(tp),
             sl: Some(sl),
             margin: Some(current_margin),
             quantity: Some(qty),
             leverage: Some(leverage),
             risk_pct: Some(risk_pct),
+            order_id: Some("".to_string()),
         }
     }
 
     async fn delete_partial_profit_target(&mut self) -> Result<()> {
         let _: () = self.redis_conn.del(TRADING_PARTIAL_PROFIT_TARGET).await?;
+
+        self.partial_profit_target = [].to_vec();
 
         Ok(())
     }
@@ -499,11 +498,44 @@ impl<'a> Bot<'a> {
             roi: Some(roi),
             leverage: self.open_pos.leverage,
             margin: self.open_pos.margin,
+            order_id: self.open_pos.order_id.clone(),
         };
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
 
         //update the margin based on the pnl
         let _ = Self::prepare_current_margin(self, pnl).await;
+
+        //let _ = self.store_loss_count(pnl).await;
+
+        //Track loss count
+        let total_profit_count = 4;
+        if self.partial_profit_target.len() == total_profit_count {
+            //This means that we did not hit any of the targets
+            self.loss_count += 1;
+            info!("Loss count: {}", self.loss_count);
+            let total_loss_count = 2;
+            if self.loss_count >= total_loss_count {
+                self.pos = Position::Flat;
+                let _ = self.store_loss_count(pnl).await;
+            }
+        }
+    }
+
+    async fn store_loss_count(&mut self, pnl: f64) -> Result<()> {
+        if pnl.is_sign_negative() || pnl < 0.00 {
+            self.loss_count += 1;
+            if self.loss_count >= 2 {
+                //Store the loss count in redis for 12hours
+                if let Err(e) = self
+                    .redis_conn
+                    .set_ex::<_, _, ()>(TRADING_BOT_LOSS_COUNT, self.loss_count, 14400) //4hours reset
+                    .await
+                {
+                    warn!("Failed to store loss count: {}", e);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub async fn load_current_margin(
@@ -523,7 +555,7 @@ impl<'a> Bot<'a> {
         };
 
         if margin <= 5.00 {
-            warn!("margin as we know it is rekt, {:2}", margin);
+            warn!("margin as we know it, is rekt, {:2}", margin);
             margin = config.margin;
             return margin;
         }
@@ -546,7 +578,8 @@ impl<'a> Bot<'a> {
         self.current_margin = current_margin;
 
         let _ = Self::store_current_margin(current_margin, &mut self.redis_conn).await;
-        let _ = OpenPosition::store_open_position(self.redis_conn.clone(), self.open_pos).await;
+        let _ =
+            OpenPosition::store_open_position(self.redis_conn.clone(), self.open_pos.clone()).await;
 
         return current_margin;
     }
@@ -591,24 +624,38 @@ impl<'a> Bot<'a> {
             roi: Some(roi),
             leverage: self.open_pos.leverage,
             margin: self.open_pos.margin,
+            order_id: self.open_pos.order_id.clone(),
         };
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
 
         //update the margin based on the pnl
         let _ = Self::prepare_current_margin(self, pnl).await;
+
+        //let _ = self.store_loss_count(pnl).await;
+
+        //Track loss count
+        let total_profit_count = 4;
+        if self.partial_profit_target.len() == total_profit_count {
+            //This means that we did not hit any of the targets
+            self.loss_count += 1;
+            info!("Loss count: {}", self.loss_count);
+            let total_loss_count = 2;
+            if self.loss_count >= total_loss_count {
+                self.pos = Position::Flat;
+                let _ = self.store_loss_count(pnl).await;
+            }
+        }
     }
 
-    pub async fn take_profit_on_long(
-        &mut self,
-        price: f64,
-        size: f64,
-        exchange: &dyn Exchange,
-    ) -> Result<()> {
+    pub async fn take_profit_on_long(&mut self, price: f64, exchange: &dyn Exchange) -> Result<()> {
         info!("Ranger Taking profit on LONG at {:.2}", price);
 
-        let exec_price = exchange.place_market_order(OrderSide::Sell, size).await?;
+        self.open_pos.tp = Some(price);
 
-        info!("Ranger Closed LONG at {:.2}", exec_price);
+        let exec_price: PlaceOrderData =
+            exchange.modify_market_order(self.open_pos.clone()).await?;
+
+        info!("Ranger Closed LONG at {:?}", exec_price);
 
         Self::close_long_position(self, price).await;
 
@@ -620,11 +667,11 @@ impl<'a> Bot<'a> {
     async fn take_partial_profit_on_long(
         &mut self,
         price: f64,
-        fraction: f64,
-        new_sl: f64,
+        target: PartialProfitTarget,
+        exchange: &dyn Exchange,
     ) -> Result<()> {
         let mut remaining_size = self.open_pos.quantity.unwrap_or_default();
-        let qty_to_close = fraction * remaining_size;
+        let qty_to_close = target.fraction * remaining_size;
 
         if qty_to_close <= 0.0000 {
             Self::close_long_position(self, price).await;
@@ -636,6 +683,7 @@ impl<'a> Bot<'a> {
                 self.partial_profit_target
             );
             self.pos = Position::Flat;
+            self.partial_profit_target = [].to_vec();
         }
 
         remaining_size -= qty_to_close;
@@ -669,11 +717,14 @@ impl<'a> Bot<'a> {
             roi: Some(roi),
             leverage: self.open_pos.leverage,
             margin: self.open_pos.margin,
+            order_id: self.open_pos.order_id.clone(),
         };
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
 
         //update the margin based on the pnl
         let _ = Self::prepare_current_margin(self, pnl).await;
+
+        let modify_order = exchange.modify_market_order(self.open_pos.clone()).await?;
 
         self.open_pos = OpenPosition {
             id: self.open_pos.id,
@@ -681,26 +732,28 @@ impl<'a> Bot<'a> {
             entry_price: self.open_pos.entry_price,
             position_size: remaining_size,
             entry_time: self.open_pos.entry_time,
-            sl: Some(new_sl),
+            tp: Some(target.target_price),
+            sl: Some(target.sl),
             margin: self.open_pos.margin,
             quantity: Some(remaining_size),
             leverage: self.open_pos.leverage,
             risk_pct: self.open_pos.risk_pct,
+            order_id: Some(modify_order.order_id),
         };
 
-        warn!("NEW SL for LONG is: {:?}", new_sl);
-        self.store_position(self.pos, self.open_pos).await?;
+        warn!("NEW SL for LONG is: {:?}", target.sl);
+        self.store_position(self.pos, self.open_pos.clone()).await?;
         Ok(())
     }
 
     async fn take_partial_profit_on_short(
         &mut self,
         price: f64,
-        fraction: f64,
-        new_sl: f64,
+        target: PartialProfitTarget,
+        exchange: &dyn Exchange,
     ) -> Result<()> {
         let mut remaining_size = self.open_pos.quantity.unwrap_or_default();
-        let qty_to_close = fraction * remaining_size;
+        let qty_to_close = target.fraction * remaining_size;
 
         if qty_to_close <= 0.0000 {
             Self::close_short_position(self, price).await;
@@ -712,6 +765,7 @@ impl<'a> Bot<'a> {
                 self.partial_profit_target
             );
             self.pos = Position::Flat;
+            self.partial_profit_target = [].to_vec();
         }
 
         remaining_size -= qty_to_close;
@@ -731,6 +785,12 @@ impl<'a> Bot<'a> {
             price,
         );
         let pnl = Helper::compute_pnl(self.pos, self.open_pos.entry_price, qty_to_close, price);
+
+        //Exchange call to take profit
+        self.open_pos.tp = Some(price);
+        let exec_price: PlaceOrderData =
+            exchange.modify_market_order(self.open_pos.clone()).await?;
+
         let closed_pos = ClosedPosition {
             id: self.open_pos.id,
             entry_price: self.open_pos.entry_price,
@@ -745,11 +805,14 @@ impl<'a> Bot<'a> {
             roi: Some(roi),
             leverage: self.open_pos.leverage,
             margin: self.open_pos.margin,
+            order_id: Some(exec_price.order_id),
         };
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
 
         //update the margin based on the pnl
         let _ = Self::prepare_current_margin(self, pnl).await;
+
+        let _ = exchange.modify_market_order(self.open_pos.clone()).await?;
 
         self.open_pos = OpenPosition {
             id: self.open_pos.id,
@@ -757,15 +820,17 @@ impl<'a> Bot<'a> {
             entry_price: self.open_pos.entry_price,
             position_size: remaining_size,
             entry_time: self.open_pos.entry_time,
-            sl: Some(new_sl),
+            tp: Some(target.target_price),
+            sl: Some(target.sl),
             margin: self.open_pos.margin,
             quantity: Some(remaining_size),
             leverage: self.open_pos.leverage,
             risk_pct: self.open_pos.risk_pct,
+            order_id: self.open_pos.order_id.clone(),
         };
-        self.store_position(self.pos, self.open_pos).await?;
+        self.store_position(self.pos, self.open_pos.clone()).await?;
 
-        warn!("NEW SL for SHORT is: {:?}", new_sl);
+        warn!("NEW SL for SHORT is: {:?}", target.sl);
 
         Ok(())
     }
@@ -773,15 +838,16 @@ impl<'a> Bot<'a> {
     pub async fn take_profit_on_short(
         &mut self,
         price: f64,
-        size: f64,
-        // config: &mut Config,
         exchange: &dyn Exchange,
     ) -> Result<()> {
         info!("Ranger Covering SHORT at {:.2}", price);
 
-        let exec_price = exchange.place_market_order(OrderSide::Buy, size).await?;
+        self.open_pos.tp = Some(price);
 
-        info!("Ranger Covered SHORT at {:.2}", exec_price);
+        let exec_price: PlaceOrderData =
+            exchange.modify_market_order(self.open_pos.clone()).await?;
+
+        info!("Ranger Covered SHORT at {:?}", exec_price);
 
         Self::close_short_position(self, price).await;
 
@@ -790,41 +856,63 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
-    fn determine_profit_difference(&mut self, zone: Zone, pos: Position) -> f64 {
-        let mut the_zone = self.default_zone;
-
+    fn determine_profit_difference(&mut self, entry_price: f64, pos: Position) -> f64 {
         if pos == Position::Long {
-            //Find the next short zone to get the profit difference from and long from
-            the_zone = *self
+            // Filter zones above entry price (for LONG TP)
+            let valid_zones: Vec<_> = self
                 .zones
                 .short_zones
                 .iter()
-                .filter(|lz| lz.high <= zone.low)
-                // must be lower than the short zone
-                .max_by(|a, b| a.high.partial_cmp(&b.high).unwrap())
+                .filter(|zone| zone.low > entry_price)
+                .collect();
+
+            if valid_zones.is_empty() {
+                return 0.00;
+            }
+
+            // Find the nearest zone by comparing distance to zone low
+            let the_zone = *valid_zones
+                .into_iter()
+                .min_by(|a, b| {
+                    let dist_a = (a.low - entry_price).abs();
+                    let dist_b = (b.low - entry_price).abs();
+                    dist_a.partial_cmp(&dist_b).unwrap()
+                })
                 .unwrap_or(&Zone {
-                    high: 0.00,
                     low: 0.00,
+                    high: 0.00,
                 });
 
-            return zone.high - the_zone.high;
+            return the_zone.low - entry_price;
         }
 
         if pos == Position::Short {
-            //Find the next long zone to get the profit difference from and long from
-            the_zone = *self
+            // Filter zones below entry price (for SHORT TP)
+            let valid_zones: Vec<_> = self
                 .zones
                 .long_zones
                 .iter()
-                .filter(|lz| lz.high <= zone.low)
-                // must be lower than the long zone
-                .max_by(|a, b| a.high.partial_cmp(&b.high).unwrap())
+                .filter(|zone| zone.high < entry_price)
+                .collect();
+
+            if valid_zones.is_empty() {
+                return 0.00;
+            }
+
+            // Find the nearest zone by comparing distance to zone high
+            let the_zone = *valid_zones
+                .into_iter()
+                .min_by(|a, b| {
+                    let dist_a = (entry_price - a.high).abs();
+                    let dist_b = (entry_price - b.high).abs();
+                    dist_a.partial_cmp(&dist_b).unwrap()
+                })
                 .unwrap_or(&Zone {
-                    high: 0.00,
                     low: 0.00,
+                    high: 0.00,
                 });
 
-            return zone.high - the_zone.high;
+            return entry_price - the_zone.high;
         }
 
         return 0.00;
@@ -835,7 +923,11 @@ impl<'a> Bot<'a> {
         entry_price: f64,
         pos: Position,
     ) -> Result<()> {
-        let price_difference = Self::determine_profit_difference(self, self.zone, pos);
+        self.zones = Bot::load_zones(&mut self.redis_conn)
+            .await
+            .unwrap_or(Zones::default());
+
+        let price_difference = Self::determine_profit_difference(self, entry_price, pos);
 
         let profit_count = 4.00;
         let mut ranger_price_difference = self.config.ranger_price_difference;
@@ -858,7 +950,11 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
-    async fn evaluate_long_partial_profit(&mut self, price: f64) -> Result<()> {
+    async fn evaluate_long_partial_profit(
+        &mut self,
+        price: f64,
+        exchange: &dyn Exchange,
+    ) -> Result<()> {
         if self.partial_profit_target.len() == 0 {
             info!(
                 "ALL TARGETS HIT FOR LONG!: {:?}",
@@ -880,7 +976,10 @@ impl<'a> Bot<'a> {
 
         let target = self.partial_profit_target[idx].clone();
 
-        if target.target_price == 0.00 || !target.target_price.is_finite() {
+        if target.target_price == 0.00
+            || !target.target_price.is_finite()
+            || target.target_price == 1.11
+        {
             return Ok(());
         }
 
@@ -888,8 +987,7 @@ impl<'a> Bot<'a> {
             "LONG: Taking Partial Profits here.... {:?}, Take profit targets: {:?}",
             price, self.partial_profit_target
         );
-        let _: () =
-            Self::take_partial_profit_on_long(self, price, target.fraction, target.sl).await?;
+        let _: () = Self::take_partial_profit_on_long(self, price, target, exchange).await?;
 
         self.partial_profit_target.remove(idx);
 
@@ -909,7 +1007,11 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
-    async fn evaluate_short_partial_profit(&mut self, price: f64) -> Result<()> {
+    async fn evaluate_short_partial_profit(
+        &mut self,
+        price: f64,
+        exchange: &dyn Exchange,
+    ) -> Result<()> {
         if self.partial_profit_target.len() == 0 {
             info!(
                 "ALL TARGETS HIT FOR SHORT!: {:?}",
@@ -931,7 +1033,10 @@ impl<'a> Bot<'a> {
 
         let target = self.partial_profit_target[idx].clone();
 
-        if target.target_price == 0.00 || !target.target_price.is_finite() {
+        if target.target_price == 0.00
+            || !target.target_price.is_finite()
+            || target.target_price == 1.11
+        {
             return Ok(());
         }
 
@@ -939,8 +1044,7 @@ impl<'a> Bot<'a> {
             "SHORT: Taking Partial Profits here.... {:?}, Take profit targets: {:?}",
             price, self.partial_profit_target
         );
-        let _: () =
-            Self::take_partial_profit_on_short(self, price, target.fraction, target.sl).await?;
+        let _: () = Self::take_partial_profit_on_short(self, price, target, exchange).await?;
 
         self.partial_profit_target.remove(idx);
         warn!(
@@ -959,34 +1063,58 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
-    pub async fn test(&mut self, price: f64) -> Result<()> {
-        self.zone = Zone {
-            high: 85_000.34,
-            low: 84_899.87,
-        };
-        let _: Result<()> = Self::store_partial_profit_targets(self, price, Position::Short).await;
+    pub async fn test(&mut self) -> Result<()> {
+        self.open_pos = self.prepare_open_position(Position::Long, 86800.11, 20.0, 0.075, 1.0);
+        info!("open_pos: {:?}", self.open_pos);
+        //Get the price from the exchange API
+        let exchange = Arc::new(HttpExchange {
+            client: reqwest::Client::new(),
+            symbol: Config::from_env().unwrap().symbol,
+        });
+        let price = exchange
+            .modify_market_order(self.open_pos.clone())
+            .await
+            .unwrap();
+        info!("price: {:?}", price);
         Ok(())
     }
 
-    pub async fn run_cycle(&mut self, price: f64, exchange: &dyn Exchange) -> Result<()> {
+    async fn run_cycle(&mut self, price: f64, exchange: &dyn Exchange) -> Result<()> {
         if price == 1.11 {
             warn!("Price failure! -> {:?}", price);
             return Ok(());
         }
-        warn!("Ranger State = {:?}", self.pos);
 
-        let size = Helper::contract_amount(price, self.current_margin, self.config.leverage);
+        self.loss_count = Self::load_loss_count(&mut self.redis_conn).await?;
+        if self.loss_count >= 2 {
+            warn!("Loss count reached 2, skipping cycle");
+            return Ok(());
+        }
+
+        //Load the zones, because it's usually updated, periodically.
+        self.zones = Bot::load_zones(&mut self.redis_conn)
+            .await
+            .unwrap_or(Zones::default());
+
+        warn!("Ranger State = {:?}", self.pos);
 
         match self.pos {
             Position::Flat => {
-                if self.zones.long_zones.iter().any(|z| z.contains(price)) {
+                if price != 1.11 && self.zones.long_zones.iter().any(|z| z.contains(price)) {
                     info!("Ranger Entering LONG at {:.2}", price);
                     let _: () = Self::delete_partial_profit_target(self).await?;
 
-                    let exec_price = exchange.place_market_order(OrderSide::Buy, size).await?;
-                    info!("Ranger Long executed at {:.2}", exec_price);
-
                     self.pos = Position::Long;
+
+                    let funding_rate = exchange.get_funding_rate().await.unwrap_or(0.0);
+                    let funding_multiplier = Helper::funding_multiplier(funding_rate, self.pos);
+                    info!(
+                        "Funding-aware sizing: rate={:.6}, multiplier={:.2}",
+                        funding_rate, funding_multiplier
+                    );
+
+                    let _: Result<()> =
+                        Self::store_partial_profit_targets(self, price, self.pos).await;
 
                     self.open_pos = Self::prepare_open_position(
                         self,
@@ -994,26 +1122,35 @@ impl<'a> Bot<'a> {
                         price,
                         self.config.leverage,
                         self.config.ranger_risk_pct,
+                        funding_multiplier,
                     );
 
-                    self.zone = *self
-                        .zones
-                        .long_zones
-                        .iter()
-                        .find(|z| z.contains(price))
-                        .unwrap_or(&self.default_zone);
+                    let exec_price: PlaceOrderData =
+                        exchange.place_market_order(self.open_pos.clone()).await?;
+                    info!("Ranger Long executed at {:?}", exec_price);
 
-                    let _: Result<()> =
-                        Self::store_partial_profit_targets(self, price, self.pos).await;
-                } else if self.zones.short_zones.iter().any(|z| z.contains(price)) {
+                    if exec_price.client_oid == "Failed to place order" {
+                        warn!("Failed to place order");
+                        //return Ok(());
+                    }
+
+                    self.open_pos.order_id = Some(exec_price.order_id);
+                } else if price != 1.11 && self.zones.short_zones.iter().any(|z| z.contains(price))
+                {
                     info!("Ranger Entering SHORT at {:.2}", price);
                     let _: () = Self::delete_partial_profit_target(self).await?;
 
-                    let exec_price = exchange.place_market_order(OrderSide::Sell, size).await?;
-
-                    info!("Ranger Short executed at {:.2}", exec_price);
-
                     self.pos = Position::Short;
+
+                    let funding_rate = exchange.get_funding_rate().await.unwrap_or(0.0);
+                    let funding_multiplier = Helper::funding_multiplier(funding_rate, self.pos);
+                    info!(
+                        "Funding-aware sizing: rate={:.6}, multiplier={:.2}",
+                        funding_rate, funding_multiplier
+                    );
+
+                    let _: Result<()> =
+                        Self::store_partial_profit_targets(self, price, self.pos).await;
 
                     self.open_pos = Self::prepare_open_position(
                         self,
@@ -1021,18 +1158,20 @@ impl<'a> Bot<'a> {
                         price,
                         self.config.leverage,
                         self.config.ranger_risk_pct,
+                        funding_multiplier,
                     );
+                    let exec_price: PlaceOrderData =
+                        exchange.place_market_order(self.open_pos.clone()).await?;
+                    info!("Ranger Short executed at {:?}", exec_price);
 
-                    self.zone = *self
-                        .zones
-                        .short_zones
-                        .iter()
-                        .find(|z| z.contains(price))
-                        .unwrap_or(&self.default_zone);
-                    let _: Result<()> =
-                        Self::store_partial_profit_targets(self, price, self.pos).await;
+                    if exec_price.client_oid == "Failed to place order" {
+                        warn!("Failed to place order");
+                        //return Ok(());
+                    }
+                    self.open_pos.order_id = Some(exec_price.order_id);
                 } else {
-                    //warn!("Price {:.2} out of any Ranger zone -- staying flat", price);
+                    //Track for new zone targets
+                    warn!("Price {:.2} out of any Ranger zone -- staying flat", price);
                 }
             }
 
@@ -1060,10 +1199,10 @@ impl<'a> Bot<'a> {
 
                 // 2️⃣ Take‑profit: exit long when we hit the short zone.
                 if self.zones.short_zones.iter().any(|z| z.contains(price)) {
-                    Self::take_profit_on_long(self, price, size, exchange).await?;
+                    Self::take_profit_on_long(self, price, exchange).await?;
                 }
 
-                let _ = Self::evaluate_long_partial_profit(self, price).await?;
+                let _ = Self::evaluate_long_partial_profit(self, price, exchange).await?;
             }
 
             Position::Short => {
@@ -1073,7 +1212,7 @@ impl<'a> Bot<'a> {
                     self.config.margin,
                     self.config.leverage,
                     self.config.risk_pct,
-                    Position::Long,
+                    Position::Short,
                 );
                 let ssl_hit = Helper::ssl_hit(price, self.pos, self.open_pos.sl.unwrap_or(in_sl));
 
@@ -1090,13 +1229,81 @@ impl<'a> Bot<'a> {
 
                 // 3️⃣ Cover: exit short when we hit the long zone.
                 if self.zones.long_zones.iter().any(|z| z.contains(price)) {
-                    Self::take_profit_on_short(self, price, size, exchange).await?;
+                    Self::take_profit_on_short(self, price, exchange).await?;
                 }
 
-                let _ = Self::evaluate_short_partial_profit(self, price).await;
+                let _ = Self::evaluate_short_partial_profit(self, price, exchange).await;
             }
         }
-        self.store_position(self.pos, self.open_pos).await?;
+        self.store_position(self.pos, self.open_pos.clone()).await?;
         Ok(())
+    }
+
+    pub async fn start_live_trading(&mut self, exchange: &dyn Exchange) -> Result<()> {
+        let mut backoff_secs = 1;
+        let max_backoff = 64;
+
+        loop {
+            info!("Connecting to Ranger live trading via WebSocket...");
+
+            let ticker_stream_result =
+                BitgetWsClient::subscribe_tickers("USDT-FUTURES", "BTCUSDT").await;
+
+            match ticker_stream_result {
+                std::result::Result::Ok(mut ticker_stream) => {
+                    info!("Successfully connected to Bitget WebSocket");
+                    backoff_secs = 1; // Reset backoff on success
+
+                    let mut graph = Graph::new();
+                    let mut last_midnight_check = Utc::now();
+
+                    while let Some(msg) = ticker_stream.next().await {
+                        match msg {
+                            std::result::Result::Ok(ticker) => {
+                                let price: f64 = ticker.last_pr.parse().unwrap_or(0.0);
+
+                                if price > 0.0 {
+                                    info!("Ticker Price = {:.2}", price);
+                                    if let Err(e) = self.run_cycle(price, exchange).await {
+                                        log::error!("Error during trading cycle: {}", e);
+                                    }
+                                }
+
+                                // Periodic cumulative stats check (midnight)
+                                if Utc::now().date_naive() != last_midnight_check.date_naive()
+                                    && Helper::is_midnight()
+                                {
+                                    warn!("It's midnight now! Processing weekly/monthly stats...");
+                                    if let Err(e) = Graph::prepare_cumulative_weekly_monthly(
+                                        &mut graph,
+                                        self.redis_conn.clone(),
+                                    )
+                                    .await
+                                    {
+                                        log::error!("Failed to process cumulative stats: {}", e);
+                                    }
+                                    last_midnight_check = Utc::now();
+                                }
+                            }
+                            std::result::Result::Err(e) => {
+                                log::error!("WebSocket ticker stream error: {}", e);
+                                break; // Break the inner loop to trigger reconnection
+                            }
+                        }
+                    }
+                    warn!("WebSocket stream closed. Attempting to reconnect...");
+                }
+                std::result::Result::Err(e) => {
+                    log::error!(
+                        "Failed to subscribe to tickers: {}. Retrying in {}s...",
+                        e,
+                        backoff_secs
+                    );
+                }
+            }
+
+            tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+            backoff_secs = std::cmp::min(backoff_secs * 2, max_backoff);
+        }
     }
 }

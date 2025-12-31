@@ -1,15 +1,16 @@
+use anyhow::anyhow;
 use anyhow::Ok;
 use anyhow::Result;
-use anyhow::anyhow;
 use std::env;
 
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Config {
     /// API key / secret pair for your broker
     pub api_key: String,
     pub api_secret: String,
+    pub passphrase: String,
 
     /// Trading symbol (e.g. BTCUSDT)
     pub symbol: String,
@@ -30,7 +31,12 @@ pub struct Config {
 
     // pub scalp_price_difference: f64,
     pub ranger_price_difference: f64,
-    pub profit_factor: f64,
+    //pub profit_factor: f64,
+    pub smc_timeframe: String,
+    pub smc_candle_count: String,
+
+    pub use_smc_indicator: bool,
+    pub use_ichimoku_indicator: bool,
 }
 
 fn default_interval() -> u64 {
@@ -45,13 +51,15 @@ impl Config {
         let api_key = env::var("API_KEY").map_err(|_| anyhow!("Missing API_KEY"))?;
 
         let api_secret = env::var("API_SECRET").map_err(|_| anyhow!("Missing API_SECRET"))?;
+        let passphrase =
+            env::var("ACCESS_PASSPHRASE").map_err(|_| anyhow!("Missing ACCESS_PASSPHRASE"))?;
 
         let symbol = env::var("SYMBOL").unwrap_or_else(|_| "BTCUSDT".into());
 
         let poll_interval_secs: u64 = env::var("POLL_INTERVAL_SECS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(5);
+            .unwrap_or(3);
 
         let redis_url = env::var("REDIS_URL").map_err(|_| anyhow!("Missing REDIS_URL"))?;
 
@@ -80,19 +88,34 @@ impl Config {
             .and_then(|v| v.parse::<f64>().ok())
             .unwrap_or(1750.0);
 
-        let profit_factor = env::var("PARTIAL_PROFIT_FACTOR")
-            .ok()
-            .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(400.0);
+        // let profit_factor = env::var("PARTIAL_PROFIT_FACTOR")
+        //     .ok()
+        //     .and_then(|v| v.parse::<f64>().ok())
+        //     .unwrap_or(400.0);
 
         let ranger_risk_pct = env::var("RANGER_RISK_PERCENTAGE")
             .ok()
             .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(0.15); //15%
+            .unwrap_or(0.075); //7.5%
+
+        //15m, 333 seems to be great for ranging on the small TF... would need consistency though
+        let smc_timeframe = env::var("SMC_TIMEFRAME").unwrap_or_else(|_| "4H".into()); //15m 4H
+        let smc_candle_count = env::var("SMC_CANDLE_COUNT").unwrap_or_else(|_| "150".into()); //150 333 1000
+
+        let use_smc_indicator = env::var("USE_SMC_INDICATOR")
+            .map_err(|_| anyhow!("Missing USE_SMC_INDICATOR"))?
+            .parse::<bool>()
+            .map_err(|_| anyhow!("USE_SMC_INDICATOR must be 'true' or 'false'"))?;
+
+        let use_ichimoku_indicator = env::var("USE_ICHIMOKU_INDICATOR")
+            .map_err(|_| anyhow!("Missing USE_ICHIMOKU_INDICATOR"))?
+            .parse::<bool>()
+            .map_err(|_| anyhow!("USE_ICHIMOKU_INDICATOR must be 'true' or 'false'"))?;
 
         Ok(Config {
             api_key,
             api_secret,
+            passphrase,
             symbol,
             poll_interval_secs,
             redis_url,
@@ -102,7 +125,11 @@ impl Config {
             ranger_risk_pct,
             // scalp_price_difference,
             ranger_price_difference,
-            profit_factor,
+            //profit_factor,
+            smc_timeframe,
+            smc_candle_count,
+            use_smc_indicator,
+            use_ichimoku_indicator,
         })
     }
 }

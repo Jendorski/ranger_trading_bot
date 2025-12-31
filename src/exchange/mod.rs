@@ -3,15 +3,14 @@ use anyhow::Result;
 use async_trait::async_trait;
 use log::info;
 
+use crate::bot::OpenPosition;
+use crate::exchange::bitget::CandleData;
+use crate::exchange::bitget::FuturesCall;
+use crate::exchange::bitget::HttpCandleData;
+use crate::exchange::bitget::PlaceOrderData;
 use crate::exchange::bitget::Prices;
 
 pub mod bitget;
-
-#[derive(Debug, Clone, Copy)]
-pub enum OrderSide {
-    Buy,
-    Sell,
-}
 
 #[async_trait]
 pub trait Exchange: Send + Sync {
@@ -24,7 +23,13 @@ pub trait Exchange: Send + Sync {
     /// Place a market order.  
     /// `side` is BUY for long, SELL for short/cover.  
     /// Returns the executed price (for logging).
-    async fn place_market_order(&self, side: OrderSide, amount: f64) -> Result<f64>;
+    async fn place_market_order(&self, open_position: OpenPosition) -> Result<PlaceOrderData>;
+
+    ///Used for executing taking profits and executing SL
+    async fn modify_market_order(&self, open_position: OpenPosition) -> Result<PlaceOrderData>;
+
+    /// Return the latest funding rate as a f64.
+    async fn get_funding_rate(&self) -> Result<f64>;
 }
 
 /// Simple HTTP‑based mock of the `Exchange` trait – replace with your real SDK.
@@ -80,13 +85,46 @@ impl Exchange for HttpExchange {
         return Ok(bitget_price);
     }
 
-    async fn place_market_order(&self, side: OrderSide, amount: f64) -> Result<f64, anyhow::Error> {
+    async fn place_market_order(
+        &self,
+        open_position: OpenPosition,
+    ) -> Result<PlaceOrderData, anyhow::Error> {
+        // For demo purposes we just log and pretend the order filled at current price.
+        // let price = self.get_current_price().await?;
+        // info!(
+        //     "Mock market {:?} for {:.6} {} at {price:.2}",
+        //     open_position.pos, open_position.entry_price, self.symbol
+        // );
+        let new_bitget_futures = <HttpCandleData as bitget::FuturesCall>::new();
+        let execute_call = new_bitget_futures.new_futures_call(open_position).await?;
+        Ok(execute_call)
+    }
+
+    async fn modify_market_order(
+        &self,
+        open_position: OpenPosition,
+    ) -> Result<PlaceOrderData, anyhow::Error> {
         // For demo purposes we just log and pretend the order filled at current price.
         let price = self.get_current_price().await?;
         info!(
             "Mock market {:?} for {:.6} {} at {price:.2}",
-            side, amount, self.symbol
+            open_position.pos, open_position.entry_price, self.symbol
         );
-        Ok(price)
+        let new_bitget_futures = <HttpCandleData as bitget::FuturesCall>::new();
+        let execute_call = new_bitget_futures
+            .modify_futures_order(open_position)
+            .await?;
+        Ok(execute_call)
+    }
+
+    async fn get_funding_rate(&self) -> Result<f64, anyhow::Error> {
+        let bitget_data = <HttpCandleData as bitget::CandleData>::new();
+        let funding_rates = bitget_data
+            .get_history_funding_rate("1".to_string())
+            .await?;
+        if let Some(first) = funding_rates.first() {
+            return Ok(first.funding_rate.parse::<f64>().unwrap_or(0.0));
+        }
+        Ok(0.0)
     }
 }
