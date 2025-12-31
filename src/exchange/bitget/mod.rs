@@ -489,6 +489,68 @@ pub struct WsTickerData {
     pub ts: String,
 }
 
+// WebSocket Candlesticks Channel Types
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WsCandleResponse {
+    pub action: String,
+    pub arg: WsCandleArg,
+    pub data: Vec<WsCandleData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WsCandleArg {
+    pub inst_type: String,
+    pub channel: String,
+    pub inst_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WsCandleData {
+    #[serde(rename = "ts")]
+    pub timestamp: String,
+    #[serde(rename = "o")]
+    pub open: String,
+    #[serde(rename = "h")]
+    pub high: String,
+    #[serde(rename = "l")]
+    pub low: String,
+    #[serde(rename = "c")]
+    pub close: String,
+    #[serde(rename = "baseVol")]
+    pub base_volume: String,
+    #[serde(rename = "quoteVol")]
+    pub quote_volume: String,
+}
+
+/// Converts user-friendly timeframe to Bitget channel name
+///
+/// # Examples
+/// - "1m" -> "candle1m"
+/// - "5m" -> "candle5m"
+/// - "1h" or "1H" -> "candle1H"
+/// - "1d" or "1D" -> "candle1D"
+pub fn parse_timeframe_to_channel(timeframe: &str) -> Result<String> {
+    let channel = match timeframe.to_lowercase().as_str() {
+        "1m" => "candle1m",
+        "5m" => "candle5m",
+        "15m" => "candle15m",
+        "30m" => "candle30m",
+        "1h" => "candle1H",
+        "4h" => "candle4H",
+        "12h" => "candle12H",
+        "1d" => "candle1D",
+        "1w" => "candle1W",
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Invalid timeframe: {}. Valid options: 1m, 5m, 15m, 30m, 1h, 4h, 12h, 1d, 1w",
+                timeframe
+            ))
+        }
+    };
+    Ok(channel.to_string())
+}
+
 pub struct BitgetWsClient;
 
 impl BitgetWsClient {
@@ -540,6 +602,76 @@ impl BitgetWsClient {
                         if let std::result::Result::Ok(response) = serde_json::from_str::<WsTickerResponse>(&text) {
                             for ticker in response.data {
                                 yield ticker;
+                            }
+                        }
+                    }
+                    std::result::Result::Ok(Some(std::result::Result::Ok(Message::Close(_)))) => break,
+                    std::result::Result::Ok(Some(std::result::Result::Err(e))) => {
+                        error!("WS error: {}", e);
+                        break;
+                    }
+                    std::result::Result::Ok(None) => break,
+                    std::result::Result::Err(_) => continue, // Timeout, check ping
+                    _ => continue,
+                }
+            }
+        };
+
+        std::result::Result::Ok(Box::pin(stream))
+    }
+
+    pub async fn subscribe_candlesticks(
+        inst_type: &str,
+        inst_id: &str,
+        timeframe: &str,
+    ) -> Result<impl futures_util::Stream<Item = Result<WsCandleData>>, Box<dyn std::error::Error>>
+    {
+        let url = "wss://ws.bitget.com/v2/ws/public";
+        info!("Connecting to Bitget WebSocket for candlesticks: {}", url);
+
+        let channel = parse_timeframe_to_channel(timeframe).map_err(|e| format!("{}", e))?;
+
+        let (ws_stream, _) = connect_async(url).await?;
+        let (mut write, mut read) = ws_stream.split();
+
+        let subscribe_msg = json!({
+            "op": "subscribe",
+            "args": [{
+                "instType": inst_type,
+                "channel": channel,
+                "instId": inst_id
+            }]
+        });
+
+        info!("Subscribing to candlesticks: {}", subscribe_msg);
+        write
+            .send(Message::Text(subscribe_msg.to_string().into()))
+            .await?;
+
+        let stream = async_stream::try_stream! {
+            let mut last_ping = std::time::Instant::now();
+            let ping_interval = std::time::Duration::from_secs(25);
+
+            loop {
+                if last_ping.elapsed() >= ping_interval {
+                    if let Err(e) = write.send(Message::Text("ping".to_string().into())).await {
+                        error!("Failed to send ping: {}", e);
+                        break;
+                    }
+                    last_ping = std::time::Instant::now();
+                }
+
+                let msg_result = tokio::time::timeout(std::time::Duration::from_secs(1), read.next()).await;
+
+                match msg_result {
+                    std::result::Result::Ok(Some(std::result::Result::Ok(Message::Text(text)))) => {
+                        if text == "pong" {
+                            continue;
+                        }
+
+                        if let std::result::Result::Ok(response) = serde_json::from_str::<WsCandleResponse>(&text) {
+                            for candle in response.data {
+                                yield candle;
                             }
                         }
                     }
@@ -627,5 +759,57 @@ mod tests {
         assert_eq!(response.arg.inst_id, "BTCUSDT");
         assert_eq!(response.data[0].last_pr, "100000.5");
         assert_eq!(response.data[0].ts, "1620000000000");
+    }
+
+    #[test]
+    fn test_parse_ws_candle_response() {
+        let json = r#"{
+            "action": "snapshot",
+            "arg": {
+                "instType": "USDT-FUTURES",
+                "channel": "candle1m",
+                "instId": "BTCUSDT"
+            },
+            "data": [
+                {
+                    "ts": "1609459200000",
+                    "o": "29000.5",
+                    "h": "29500.0",
+                    "l": "28900.0",
+                    "c": "29300.5",
+                    "baseVol": "100.5",
+                    "quoteVol": "2950000.0"
+                }
+            ]
+        }"#;
+
+        let response: WsCandleResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.action, "snapshot");
+        assert_eq!(response.arg.channel, "candle1m");
+        assert_eq!(response.arg.inst_id, "BTCUSDT");
+        assert_eq!(response.data[0].timestamp, "1609459200000");
+        assert_eq!(response.data[0].open, "29000.5");
+        assert_eq!(response.data[0].high, "29500.0");
+        assert_eq!(response.data[0].low, "28900.0");
+        assert_eq!(response.data[0].close, "29300.5");
+    }
+
+    #[test]
+    fn test_parse_timeframe_to_channel() {
+        assert_eq!(parse_timeframe_to_channel("1m").unwrap(), "candle1m");
+        assert_eq!(parse_timeframe_to_channel("5m").unwrap(), "candle5m");
+        assert_eq!(parse_timeframe_to_channel("15m").unwrap(), "candle15m");
+        assert_eq!(parse_timeframe_to_channel("30m").unwrap(), "candle30m");
+        assert_eq!(parse_timeframe_to_channel("1h").unwrap(), "candle1H");
+        assert_eq!(parse_timeframe_to_channel("1H").unwrap(), "candle1H");
+        assert_eq!(parse_timeframe_to_channel("4h").unwrap(), "candle4H");
+        assert_eq!(parse_timeframe_to_channel("12h").unwrap(), "candle12H");
+        assert_eq!(parse_timeframe_to_channel("1d").unwrap(), "candle1D");
+        assert_eq!(parse_timeframe_to_channel("1D").unwrap(), "candle1D");
+        assert_eq!(parse_timeframe_to_channel("1w").unwrap(), "candle1W");
+        assert_eq!(parse_timeframe_to_channel("1W").unwrap(), "candle1W");
+
+        // Test invalid timeframe
+        assert!(parse_timeframe_to_channel("invalid").is_err());
     }
 }
