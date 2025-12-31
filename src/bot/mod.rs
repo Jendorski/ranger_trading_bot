@@ -1,5 +1,5 @@
-use anyhow::Result;
 use anyhow::anyhow;
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use log::{info, warn};
 use redis::{AsyncCommands, RedisError};
@@ -10,10 +10,10 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::config::Config;
-use crate::exchange::Exchange;
-use crate::exchange::HttpExchange;
 use crate::exchange::bitget::BitgetWsClient;
 use crate::exchange::bitget::PlaceOrderData;
+use crate::exchange::Exchange;
+use crate::exchange::HttpExchange;
 use crate::graph::Graph;
 use crate::helper::TRADING_BOT_LOSS_COUNT;
 use crate::helper::TRADING_PARTIAL_PROFIT_TARGET;
@@ -72,38 +72,13 @@ impl Default for Zones {
                     high: 80_102.80,
                 },
                 Zone {
-                    low: 85_301.80,
-                    high: 85_402.80,
+                    low: 83_991.80,
+                    high: 84_092.80,
                 },
-                // Zone {
-                //     low: 89_301.80,
-                //     high: 89_402.80,
-                // },
-                // Zone {
-                //     low: 91_106.80,
-                //     high: 91_134.80,
-                // },
-                // Zone {
-                //     low: 93_030.10,
-                //     high: 93_179.60,
-                // },
-                // Zone {
-                //     low: 99_079.40,
-                //     high: 99_299.00,
-                // },
-                // //These zones are chop city
-                // // Zone {
-                // //     low: 102_979.9,
-                // //     high: 103_057.8,
-                // // },
-                // // Zone {
-                // //     low: 106_496.8,
-                // //     high: 106_596.8,
-                // // },
-                // Zone {
-                //     low: 105_118.9,
-                //     high: 105_240.10,
-                // },
+                Zone {
+                    low: 86_401.80,
+                    high: 86_602.80,
+                },
                 Zone {
                     low: 109_018.9,
                     high: 109_122.8,
@@ -194,22 +169,13 @@ impl Default for Zones {
                     low: 104_511.00,
                     high: 104_596.30,
                 },
-                //These zones are chop city
-                // Zone {
-                //     low: 106_384.0,
-                //     high: 106_484.0,
-                // },
-                // Zone {
-                //     low: 102_801.0,
-                //     high: 102_850.0,
-                // },
                 Zone {
                     low: 98_030.10,
                     high: 98_079.60,
                 },
                 Zone {
-                    low: 93_630.10,
-                    high: 93_679.60,
+                    low: 93_930.10,
+                    high: 94_079.60,
                 },
                 Zone {
                     low: 92_630.10,
@@ -218,14 +184,6 @@ impl Default for Zones {
                 Zone {
                     low: 89_906.80,
                     high: 90_008.60,
-                },
-                // Zone {
-                //     low: 84_906.80,
-                //     high: 85_098.60,
-                // },
-                Zone {
-                    low: 79_806.80,
-                    high: 80_098.60,
                 },
                 Zone {
                     low: 73_906.80,

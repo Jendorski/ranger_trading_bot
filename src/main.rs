@@ -40,17 +40,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // 3️⃣ Bot state
     let mut bot = bot::Bot::new(redis_conn.clone(), &cfg).await?;
-    // let mut scalper = bot::scalper::ScalperBot::new(redis_conn.clone()).await?;
 
-    let smc_conn = redis_conn.clone();
-    let smc_config = cfg.clone();
-    let _smc_handle = tokio::spawn(async move {
-        trackers::smart_money_concepts::smc_loop(smc_conn, smc_config).await;
-    });
+    if cfg.use_smc_indicator {
+        let smc_conn = redis_conn.clone();
+        let smc_config = cfg.clone();
+        let _smc_handle = tokio::spawn(async move {
+            trackers::smart_money_concepts::smc_loop(smc_conn, smc_config).await;
+        });
+    }
 
-    // let _momentum_websocket_handler = tokio::spawn(async move {
-    //     let _: () = momentum::start_live_tracking().await.unwrap();
-    // });
+    if cfg.use_ichimoku_indicator {
+        let ichimoku_conn = redis_conn.clone();
+        let _tracker_ichimoku = tokio::spawn(async move {
+            if let Err(e) = trackers::ichimoku::ichimoku_loop(ichimoku_conn).await {
+                log::error!("Ichimoku tracker error: {}", e);
+            }
+        });
+    }
 
     info!("Starting bot loop...");
 

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use log::{info, warn};
+use log::info;
 use redis::AsyncCommands;
 use tokio::time;
 
