@@ -102,25 +102,15 @@ impl Config {
         let smc_timeframe = env::var("SMC_TIMEFRAME").unwrap_or_else(|_| "4H".into()); //15m 4H
         let smc_candle_count = env::var("SMC_CANDLE_COUNT").unwrap_or_else(|_| "150".into()); //150 333 1000
 
-        // let use_smc_indicator = env::var("USE_SMC_INDICATOR")
-        //     .ok()
-        //     .and_then(|v| v.parse::<bool>().ok())
-        //     .unwrap_or(false);
-
-        // let use_ichimoku_indicator = env::var("USE_ICHIKOMU_INDICATOR")
-        //     .ok()
-        //     .and_then(|v| v.parse::<bool>().ok())
-        //     .unwrap_or(false);
-
         let use_smc_indicator = env::var("USE_SMC_INDICATOR")
             .map_err(|_| anyhow!("Missing USE_SMC_INDICATOR"))?
             .parse::<bool>()
             .map_err(|_| anyhow!("USE_SMC_INDICATOR must be 'true' or 'false'"))?;
 
-        let use_ichimoku_indicator = env::var("USE_ICHIKOMU_INDICATOR")
-            .map_err(|_| anyhow!("Missing USE_ICHIKOMU_INDICATOR"))?
+        let use_ichimoku_indicator = env::var("USE_ICHIMOKU_INDICATOR")
+            .map_err(|_| anyhow!("Missing USE_ICHIMOKU_INDICATOR"))?
             .parse::<bool>()
-            .map_err(|_| anyhow!("USE_ICHIKOMU_INDICATOR must be 'true' or 'false'"))?;
+            .map_err(|_| anyhow!("USE_ICHIMOKU_INDICATOR must be 'true' or 'false'"))?;
 
         Ok(Config {
             api_key,
