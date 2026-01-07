@@ -10,6 +10,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::config::Config;
+use crate::exchange::bitget::fees::BitgetFuturesFees;
 use crate::exchange::bitget::BitgetWsClient;
 use crate::exchange::bitget::PlaceOrderData;
 use crate::exchange::Exchange;
@@ -229,6 +230,8 @@ pub struct ClosedPosition {
     pub leverage: Option<f64>,
     pub margin: Option<f64>,
     pub order_id: Option<String>,
+    pub pnl_after_fees: Option<f64>,
+    pub exit_fee: Option<f64>,
 }
 
 impl ClosedPosition {
@@ -425,7 +428,7 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
-    fn prepare_open_position(
+    async fn prepare_open_position(
         &mut self,
         pos: Position,
         entry_price: f64,
@@ -434,6 +437,7 @@ impl<'a> Bot<'a> {
         funding_multiplier: f64,
     ) -> OpenPosition {
         let current_margin = self.current_margin * funding_multiplier;
+
         let sl = Helper::stop_loss_price(entry_price, current_margin, leverage, risk_pct, pos);
         let qty = Helper::contract_amount(entry_price, current_margin, leverage);
         let tp = self
@@ -445,6 +449,11 @@ impl<'a> Bot<'a> {
                 sl: 1.11,
             })
             .target_price;
+
+        let fees = BitgetFuturesFees::new(self.redis_conn.clone());
+        let margin_minus_fees = fees
+            .calc_margin_for_entry(entry_price, qty, current_margin)
+            .await;
         OpenPosition {
             id: Uuid::new_v4(),
             pos: pos,
@@ -453,7 +462,7 @@ impl<'a> Bot<'a> {
             entry_time: Utc::now(),
             tp: Some(tp),
             sl: Some(sl),
-            margin: Some(current_margin),
+            margin: Some(margin_minus_fees),
             quantity: Some(qty),
             leverage: Some(leverage),
             risk_pct: Some(risk_pct),
@@ -484,6 +493,8 @@ impl<'a> Bot<'a> {
             self.open_pos.position_size,
             price,
         );
+        let fees = BitgetFuturesFees::new(self.redis_conn.clone());
+        let (pnl_after_fees, exit_fee) = fees.calc_pnl_for_exit(self.open_pos.clone(), price).await;
         let closed_pos = ClosedPosition {
             id: self.open_pos.id,
             entry_price: self.open_pos.entry_price,
@@ -499,6 +510,8 @@ impl<'a> Bot<'a> {
             leverage: self.open_pos.leverage,
             margin: self.open_pos.margin,
             order_id: self.open_pos.order_id.clone(),
+            pnl_after_fees: Some(pnl_after_fees),
+            exit_fee: Some(exit_fee),
         };
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
 
@@ -528,7 +541,7 @@ impl<'a> Bot<'a> {
                 //Store the loss count in redis for 12hours
                 if let Err(e) = self
                     .redis_conn
-                    .set_ex::<_, _, ()>(TRADING_BOT_LOSS_COUNT, self.loss_count, 14400) //4hours reset
+                    .set_ex::<_, _, ()>(TRADING_BOT_LOSS_COUNT, self.loss_count, 43200) //12hours reset
                     .await
                 {
                     warn!("Failed to store loss count: {}", e);
@@ -602,6 +615,8 @@ impl<'a> Bot<'a> {
             self.open_pos.position_size,
             price,
         );
+        let fees = BitgetFuturesFees::new(self.redis_conn.clone());
+        let (pnl_after_fees, exit_fee) = fees.calc_pnl_for_exit(self.open_pos.clone(), price).await;
         let roi = Helper::calc_roi(
             &mut Helper::from_config(),
             self.open_pos.margin.unwrap_or(self.config.margin),
@@ -625,6 +640,8 @@ impl<'a> Bot<'a> {
             leverage: self.open_pos.leverage,
             margin: self.open_pos.margin,
             order_id: self.open_pos.order_id.clone(),
+            pnl_after_fees: Some(pnl_after_fees),
+            exit_fee: Some(exit_fee),
         };
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
 
@@ -703,6 +720,8 @@ impl<'a> Bot<'a> {
             price,
         );
         let pnl = Helper::compute_pnl(self.pos, self.open_pos.entry_price, qty_to_close, price);
+        let fees = BitgetFuturesFees::new(self.redis_conn.clone());
+        let (pnl_after_fees, exit_fee) = fees.calc_pnl_for_exit(self.open_pos.clone(), price).await;
         let closed_pos = ClosedPosition {
             id: self.open_pos.id,
             entry_price: self.open_pos.entry_price,
@@ -718,6 +737,8 @@ impl<'a> Bot<'a> {
             leverage: self.open_pos.leverage,
             margin: self.open_pos.margin,
             order_id: self.open_pos.order_id.clone(),
+            pnl_after_fees: Some(pnl_after_fees),
+            exit_fee: Some(exit_fee),
         };
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
 
@@ -785,6 +806,8 @@ impl<'a> Bot<'a> {
             price,
         );
         let pnl = Helper::compute_pnl(self.pos, self.open_pos.entry_price, qty_to_close, price);
+        let fees = BitgetFuturesFees::new(self.redis_conn.clone());
+        let (pnl_after_fees, exit_fee) = fees.calc_pnl_for_exit(self.open_pos.clone(), price).await;
 
         //Exchange call to take profit
         self.open_pos.tp = Some(price);
@@ -806,6 +829,8 @@ impl<'a> Bot<'a> {
             leverage: self.open_pos.leverage,
             margin: self.open_pos.margin,
             order_id: Some(exec_price.order_id),
+            pnl_after_fees: Some(pnl_after_fees),
+            exit_fee: Some(exit_fee),
         };
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
 
@@ -1064,12 +1089,15 @@ impl<'a> Bot<'a> {
     }
 
     pub async fn test(&mut self) -> Result<()> {
-        self.open_pos = self.prepare_open_position(Position::Long, 86800.11, 20.0, 0.075, 1.0);
+        self.open_pos = self
+            .prepare_open_position(Position::Long, 86800.11, 20.0, 0.075, 1.0)
+            .await;
         info!("open_pos: {:?}", self.open_pos);
         //Get the price from the exchange API
         let exchange = Arc::new(HttpExchange {
             client: reqwest::Client::new(),
             symbol: Config::from_env().unwrap().symbol,
+            redis_conn: self.redis_conn.clone(),
         });
         let price = exchange
             .modify_market_order(self.open_pos.clone())
@@ -1123,7 +1151,8 @@ impl<'a> Bot<'a> {
                         self.config.leverage,
                         self.config.ranger_risk_pct,
                         funding_multiplier,
-                    );
+                    )
+                    .await;
 
                     let exec_price: PlaceOrderData =
                         exchange.place_market_order(self.open_pos.clone()).await?;
@@ -1159,7 +1188,8 @@ impl<'a> Bot<'a> {
                         self.config.leverage,
                         self.config.ranger_risk_pct,
                         funding_multiplier,
-                    );
+                    )
+                    .await;
                     let exec_price: PlaceOrderData =
                         exchange.place_market_order(self.open_pos.clone()).await?;
                     info!("Ranger Short executed at {:?}", exec_price);

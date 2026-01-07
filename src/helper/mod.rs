@@ -275,6 +275,7 @@ impl Helper {
             // Determine the new stop‑loss after this TP.
             let new_sl = if i == 0 {
                 entry_price // move SL to entry price
+                            //(entry_price + tp) / 2.0 //the new Stop Loss is now calculated as the midpoint (equidistance) between the entry_price and the target price
             } else if i == 1 {
                 tp_prices[0] //entry_price // TP2 → SL is moved to TP1
             } else {

@@ -421,6 +421,7 @@ impl SmcEngine {
         let exchange = Arc::new(HttpExchange {
             client: reqwest::Client::new(),
             symbol: Config::from_env().unwrap().symbol,
+            redis_conn: conn.clone(),
         });
         let price = exchange.get_current_price().await.unwrap();
         info!("price: {:?}", price);
@@ -743,15 +744,6 @@ async fn smc_main(conn: &mut redis::aio::MultiplexedConnection, timeframe: Strin
             }
         }
     }
-
-    // let long_zone = sweep_lows
-    //     .iter()
-    //     .min_by(|a, b| a.low.partial_cmp(&b.low).unwrap())
-    //     .cloned()
-    //     .unwrap_or(Zone {
-    //         low: 0.0,
-    //         high: 0.0,
-    //     });
 
     let (filtered_highs, filtered_lows) = remove_conflicting_zones(sweep_highs, sweep_lows, 1500.0);
 

@@ -15,6 +15,8 @@ use crate::{
     helper::Helper,
 };
 
+pub mod fees;
+
 //For binance: https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=5m&limit=100
 //FOR BITGET, USE: https://api.bitget.com/api/v2/public/time to get the Bitget Server time
 
@@ -123,7 +125,7 @@ pub struct OrderDetail {
 }
 
 // Custom deserializers for string-to-number conversion
-fn deserialize_string_to_i64<'de, D>(deserializer: D) -> Result<i64, D::Error>
+pub(crate) fn deserialize_string_to_i64<'de, D>(deserializer: D) -> Result<i64, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -131,7 +133,7 @@ where
     s.parse::<i64>().map_err(serde::de::Error::custom)
 }
 
-fn deserialize_string_to_f64<'de, D>(deserializer: D) -> Result<f64, D::Error>
+pub(crate) fn deserialize_string_to_f64<'de, D>(deserializer: D) -> Result<f64, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
