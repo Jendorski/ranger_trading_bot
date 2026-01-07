@@ -1,8 +1,8 @@
-use anyhow::Result;
 use anyhow::anyhow;
+use anyhow::Result;
 use chrono::Datelike;
 use chrono::Utc;
-use redis::{AsyncCommands, aio::MultiplexedConnection};
+use redis::{aio::MultiplexedConnection, AsyncCommands};
 use serde_json;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -79,6 +79,8 @@ impl Graph {
             leverage: Some(0.00),
             margin: Some(0.00),
             order_id: None,
+            pnl_after_fees: None,
+            exit_fee: None,
         };
 
         closed.as_str()

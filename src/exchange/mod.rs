@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use log::info;
 
 use crate::bot::OpenPosition;
+use crate::exchange::bitget::fees::VipFeeRate;
 use crate::exchange::bitget::CandleData;
 use crate::exchange::bitget::FuturesCall;
 use crate::exchange::bitget::HttpCandleData;
@@ -30,6 +31,7 @@ pub trait Exchange: Send + Sync {
 
     /// Return the latest funding rate as a f64.
     async fn get_funding_rate(&self) -> Result<f64>;
+    async fn get_fee_rates(&self) -> Result<VipFeeRate>;
 }
 
 /// Simple HTTP‑based mock of the `Exchange` trait – replace with your real SDK.
@@ -38,6 +40,7 @@ pub trait Exchange: Send + Sync {
 pub struct HttpExchange {
     pub client: reqwest::Client,
     pub(crate) symbol: String,
+    pub redis_conn: redis::aio::MultiplexedConnection,
 }
 
 #[async_trait::async_trait]
@@ -126,5 +129,12 @@ impl Exchange for HttpExchange {
             return Ok(first.funding_rate.parse::<f64>().unwrap_or(0.0));
         }
         Ok(0.0)
+    }
+
+    async fn get_fee_rates(&self) -> Result<VipFeeRate, anyhow::Error> {
+        let conn = self.redis_conn.clone();
+        let fees = bitget::fees::BitgetFuturesFees::new(conn);
+        let bitget_data = fees.get_vip_fee_rates().await?;
+        Ok(bitget_data.first().unwrap().clone())
     }
 }

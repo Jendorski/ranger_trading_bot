@@ -36,6 +36,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let exchange = Arc::new(HttpExchange {
         client: reqwest::Client::new(),
         symbol: cfg.symbol.clone(),
+        redis_conn: redis_conn.clone(),
     });
 
     // 3️⃣ Bot state
