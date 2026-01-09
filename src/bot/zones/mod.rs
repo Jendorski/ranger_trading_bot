@@ -1,3 +1,4 @@
+use log::info;
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use std::hash::Hasher;
@@ -221,7 +222,6 @@ pub struct ZoneId(u64);
 impl ZoneId {
     pub fn from_zone(zone: &Zone) -> Self {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        println!("hasher: {:?}", hasher);
 
         match zone.side {
             Side::Long => 1u8.hash(&mut hasher),
@@ -294,8 +294,12 @@ impl ZoneGuard {
 
     pub async fn get_trade_result(&mut self, zone_id: ZoneId) -> ZoneStats {
         let key: String = format!("zone_stats::{}", zone_id.0);
-        let stats: String = self.redis_conn.get(key).await.unwrap();
-        let stats: ZoneStats = serde_json::from_str(&stats).unwrap();
+        let stats: String = self.redis_conn.get(key).await.unwrap_or(String::from("{}"));
+        let stats: ZoneStats = serde_json::from_str(&stats).unwrap_or(ZoneStats {
+            consecutive_losses: 0,
+            disabled: false,
+            cooldown_until: None,
+        });
 
         return stats;
     }
@@ -308,6 +312,11 @@ impl ZoneGuard {
 
             if stats.consecutive_losses >= self.max_losses {
                 stats.disabled = true;
+                info!(
+                    "Self::now() + self.cooldown_secs): {:?}",
+                    Self::now() + self.cooldown_secs
+                );
+                stats.cooldown_until = Some(Self::now() + self.cooldown_secs);
             }
         } else {
             stats.consecutive_losses = 0;

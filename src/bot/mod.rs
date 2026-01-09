@@ -368,7 +368,7 @@ impl<'a> Bot<'a> {
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
 
         //update the margin based on the pnl
-        let _ = Self::prepare_current_margin(self, pnl).await;
+        let _ = Self::prepare_current_margin(self, pnl_after_fees).await;
 
         //let _ = self.store_loss_count(pnl).await;
 
@@ -393,7 +393,7 @@ impl<'a> Bot<'a> {
             let total_loss_count = 2;
             if self.loss_count >= total_loss_count {
                 self.pos = Position::Flat;
-                let _ = self.store_loss_count(pnl).await;
+                let _ = self.store_loss_count(pnl_after_fees).await;
             }
         }
     }
@@ -401,15 +401,14 @@ impl<'a> Bot<'a> {
     async fn store_loss_count(&mut self, pnl: Decimal) -> Result<()> {
         if pnl.is_sign_negative() || pnl < dec!(0.00) {
             self.loss_count += 1;
-            if self.loss_count >= 2 {
-                //Store the loss count in redis for 12hours
-                if let Err(e) = self
-                    .redis_conn
-                    .set_ex::<_, _, ()>(TRADING_BOT_LOSS_COUNT, self.loss_count, 43200) //12hours reset
-                    .await
-                {
-                    warn!("Failed to store loss count: {}", e);
-                }
+
+            //Store the loss count in redis for 12hours
+            if let Err(e) = self
+                .redis_conn
+                .set_ex::<_, _, ()>(TRADING_BOT_LOSS_COUNT, self.loss_count, 43200) //12hours reset
+                .await
+            {
+                warn!("Failed to store loss count: {}", e);
             }
         }
         Ok(())
@@ -513,9 +512,7 @@ impl<'a> Bot<'a> {
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
 
         //update the margin based on the pnl
-        let _ = Self::prepare_current_margin(self, pnl).await;
-
-        //let _ = self.store_loss_count(pnl).await;
+        let _ = Self::prepare_current_margin(self, pnl_after_fees).await;
 
         //Track loss count
         let total_profit_count = 4;
@@ -538,7 +535,7 @@ impl<'a> Bot<'a> {
             let total_loss_count = 2;
             if self.loss_count >= total_loss_count {
                 self.pos = Position::Flat;
-                let _ = self.store_loss_count(pnl).await;
+                let _ = self.store_loss_count(pnl_after_fees).await;
             }
         }
     }
@@ -658,7 +655,7 @@ impl<'a> Bot<'a> {
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
 
         //update the margin based on the pnl
-        let _ = Self::prepare_current_margin(self, pnl).await;
+        let _ = Self::prepare_current_margin(self, pnl_after_fees).await;
 
         self.open_pos = OpenPosition {
             id: self.open_pos.id,
@@ -771,7 +768,7 @@ impl<'a> Bot<'a> {
         let _ = Self::store_closed_position(&mut self.redis_conn, &closed_pos).await;
 
         //update the margin based on the pnl
-        let _ = Self::prepare_current_margin(self, pnl).await;
+        let _ = Self::prepare_current_margin(self, pnl_after_fees).await;
 
         self.open_pos = OpenPosition {
             id: self.open_pos.id,
@@ -953,7 +950,7 @@ impl<'a> Bot<'a> {
 
         let target = self.partial_profit_target[idx].clone();
 
-        if target.target_price.is_zero() || !target.target_price.is_sign_positive() {
+        if target.target_price.is_zero() || target.target_price.is_sign_negative() {
             return Ok(());
         }
 
@@ -1000,6 +997,7 @@ impl<'a> Bot<'a> {
             .partial_profit_target
             .iter()
             .position(|t| dec_price <= t.target_price);
+        info!("idx_opt: {:?}", idx_opt);
 
         let idx = idx_opt.unwrap_or(usize::MAX);
 
@@ -1008,8 +1006,9 @@ impl<'a> Bot<'a> {
         }
 
         let target = self.partial_profit_target[idx].clone();
+        info!("target: {:?}", target);
 
-        if target.target_price.is_zero() || !target.target_price.is_sign_negative() {
+        if target.target_price.is_zero() || target.target_price.is_sign_negative() {
             return Ok(());
         }
 
@@ -1047,7 +1046,6 @@ impl<'a> Bot<'a> {
             return Ok(());
         }
 
-        self.loss_count = Self::load_loss_count(&mut self.redis_conn).await?;
         if self.loss_count >= 2 {
             warn!("Loss count reached 2, skipping cycle");
             return Ok(());
@@ -1068,21 +1066,14 @@ impl<'a> Bot<'a> {
                     .iter()
                     .find(|z| price != 1.11 && z.contains(price))
                 {
-                    info!("Ranger Entering LONG at {:.2} in zone {:?}", price, zone);
                     let zone_id = ZoneId::from_zone(zone);
-                    info!("zone_id: {:?}", zone_id);
-
                     let z_guard_trade_result = self.zone_guard.get_trade_result(zone_id).await;
-
                     if z_guard_trade_result.disabled {
-                        warn!(
-                            "Zone Guard: consecutive losses {:?}",
-                            z_guard_trade_result.consecutive_losses
-                        );
                         warn!("Zone {:?} is not open for trading", zone);
                         return Ok(());
                     }
 
+                    info!("Ranger Entering LONG at {:.2} in zone {:?}", price, zone);
                     let _: () = Self::delete_partial_profit_target(self).await?;
 
                     self.pos = Position::Long;
@@ -1123,22 +1114,16 @@ impl<'a> Bot<'a> {
                     .iter()
                     .find(|z| price != 1.11 && z.contains(price))
                 {
-                    info!("Ranger Entering SHORT at {:.2} in zone {:?}", price, zone);
-
                     let zone_id = ZoneId::from_zone(zone);
-                    info!("zone_id: {:?}", zone_id);
 
                     let z_guard_trade_result = self.zone_guard.get_trade_result(zone_id).await;
 
                     if z_guard_trade_result.disabled {
-                        warn!(
-                            "Zone Guard: consecutive losses {:?}",
-                            z_guard_trade_result.consecutive_losses
-                        );
-                        warn!("Zone {:?} is not open for trading", zone);
+                        warn!("{:?} is not open for trading", zone);
                         return Ok(());
                     }
 
+                    info!("Ranger Entering SHORT at {:.2} in zone {:?}", price, zone);
                     let _: () = Self::delete_partial_profit_target(self).await?;
 
                     self.pos = Position::Short;
