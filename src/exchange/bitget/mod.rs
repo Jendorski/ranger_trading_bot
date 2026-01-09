@@ -4,6 +4,7 @@ use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
 use log::{error, info};
 use reqwest::Client;
+use rust_decimal_macros::dec;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
@@ -238,8 +239,11 @@ impl FuturesCall for HttpCandleData {
         let path = "/api/v2/mix/order/modify-order";
         let method = "POST";
 
-        let preset_stop_surplus_price = Helper::truncate_to_1_dp(open_position.tp.unwrap_or(0.00));
-        let preset_stop_loss_price = Helper::truncate_to_1_dp(open_position.sl.unwrap_or(0.00));
+        let f64_tp = Helper::decimal_to_f64(open_position.tp.unwrap_or(dec!(0.00)));
+        let f64_sl = Helper::decimal_to_f64(open_position.sl.unwrap_or(dec!(0.00)));
+
+        let preset_stop_surplus_price = Helper::truncate_to_1_dp(f64_tp);
+        let preset_stop_loss_price = Helper::truncate_to_1_dp(f64_sl);
 
         let size = open_position.position_size.to_string();
 
@@ -327,7 +331,8 @@ impl FuturesCall for HttpCandleData {
         let method = "POST";
 
         //let preset_stop_surplus_price = open_position.tp.unwrap().to_string();
-        let preset_stop_loss_price = Helper::truncate_to_1_dp(open_position.sl.unwrap_or(0.00));
+        let f64_sl = Helper::decimal_to_f64(open_position.sl.unwrap_or(dec!(0.00)));
+        let preset_stop_loss_price = Helper::truncate_to_1_dp(f64_sl);
 
         let size = open_position.position_size.to_string();
 

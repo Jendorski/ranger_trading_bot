@@ -1,4 +1,7 @@
 use redis::AsyncCommands;
+use rust_decimal::prelude::FromPrimitive;
+use rust_decimal::Decimal;
+use rust_decimal_macros::dec;
 use serde::{Deserialize, Serialize};
 
 use crate::bot::{OpenPosition, Position};
@@ -64,7 +67,12 @@ impl BitgetFuturesFees {
             .map(|r| Self::from_vip_data(self.redis_conn, r))
     }
 
-    pub async fn fee_on_notional(&self, price: f64, size: f64, exec: ExecutionType) -> f64 {
+    pub async fn fee_on_notional(
+        &self,
+        price: Decimal,
+        size: Decimal,
+        exec: ExecutionType,
+    ) -> Decimal {
         let vip_fee_rates_resp = Self::get_vip_fee_rates(self).await;
 
         let vip_fee_rates = vip_fee_rates_resp.unwrap_or(Vec::from([VipFeeRate {
@@ -87,24 +95,29 @@ impl BitgetFuturesFees {
             ExecutionType::Maker => maker_fee,
             ExecutionType::Taker => taker_fee,
         };
-        notional * rate
+        notional * Decimal::from_f64(rate).unwrap()
     }
 
-    pub async fn pnl_for_exit(side: Position, entry_price: f64, exit_price: f64, size: f64) -> f64 {
+    pub async fn pnl_for_exit(
+        side: Position,
+        entry_price: Decimal,
+        exit_price: Decimal,
+        size: Decimal,
+    ) -> Decimal {
         match side {
             Position::Long => (exit_price - entry_price) * size,
             Position::Short => (entry_price - exit_price) * size,
-            Position::Flat => 0.00,
+            Position::Flat => dec!(0.00),
         }
     }
 
     //Always using taker fee for entry
     pub async fn calc_margin_for_entry(
         &self,
-        entry_price: f64,
-        position_size: f64,
-        margin: f64,
-    ) -> f64 {
+        entry_price: Decimal,
+        position_size: Decimal,
+        margin: Decimal,
+    ) -> Decimal {
         let entry_fee = self
             .fee_on_notional(entry_price, position_size, ExecutionType::Taker)
             .await;
@@ -114,8 +127,8 @@ impl BitgetFuturesFees {
     pub async fn calc_pnl_for_exit(
         &self,
         open_position: OpenPosition,
-        current_price: f64,
-    ) -> (f64, f64) {
+        current_price: Decimal,
+    ) -> (Decimal, Decimal) {
         let exit_fee = self
             .fee_on_notional(
                 current_price,
@@ -147,9 +160,9 @@ impl BitgetFuturesFees {
 
         let url = "https://api.bitget.com/api/v2/mix/market/vip-fee-rate";
 
-        let response = reqwest::blocking::get(url)?;
+        let response = reqwest::get(url).await?;
 
-        let text = response.text()?;
+        let text = response.text().await?;
         let api_response: ApiResponse<Vec<VipFeeRate>> = serde_json::from_str(&text)?;
 
         if api_response.code != "00000" {

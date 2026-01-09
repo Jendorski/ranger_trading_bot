@@ -54,4 +54,8 @@ uuid = { version = "1.4", features = ["serde", "v4"] }
 # Temp file
 tempfile = "3.24.0"
 
+# Decimals
+rust_decimal = "1.35"
+rust_decimal_macros = "1.35"
+
 # Optional: you can replace `reqwest` with the official exchange SDK if it exists.

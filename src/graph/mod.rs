@@ -3,6 +3,8 @@ use anyhow::Result;
 use chrono::Datelike;
 use chrono::Utc;
 use redis::{aio::MultiplexedConnection, AsyncCommands};
+use rust_decimal::Decimal;
+use rust_decimal_macros::dec;
 use serde_json;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -66,18 +68,18 @@ impl Graph {
     fn load_default_closed_position() -> String {
         let closed = ClosedPosition {
             id: Uuid::nil(),
-            pnl: 0.00,
+            pnl: dec!(0.00),
             position: Some(Position::Flat),
             side: Some(Position::Flat),
-            entry_price: 0.00,
+            entry_price: dec!(0.00),
             entry_time: Utc::now(),
-            exit_price: 0.00,
+            exit_price: dec!(0.00),
             exit_time: Utc::now(),
-            quantity: Some(0.00),
-            sl: Some(0.00),
-            roi: Some(0.00),
-            leverage: Some(0.00),
-            margin: Some(0.00),
+            quantity: Some(dec!(0.00)),
+            sl: Some(dec!(0.00)),
+            roi: Some(dec!(0.00)),
+            leverage: Some(dec!(0.00)),
+            margin: Some(dec!(0.00)),
             order_id: None,
             pnl_after_fees: None,
             exit_fee: None,
@@ -120,10 +122,10 @@ impl Graph {
             let iso = pos.exit_time.iso_week(); // ISO‑8601 week (Mon–Sun)
             let key = (iso.year(), iso.week());
 
-            if pos.entry_price != 0.0 && pos.exit_price != 0.0 {
+            if pos.entry_price != dec!(0.00) && pos.exit_price != dec!(0.00) {
                 let pnl_percent = Helper::pnl_percent(
-                    pos.entry_price,
-                    pos.exit_price,
+                    Helper::decimal_to_f64(pos.entry_price),
+                    Helper::decimal_to_f64(pos.exit_price),
                     //pos.leverage.unwrap_or(self.config.leverage),
                     pos.position.unwrap_or(bot::Position::Flat),
                 );
@@ -142,10 +144,10 @@ impl Graph {
         for pos in positions {
             let key = (pos.exit_time.year(), pos.exit_time.month());
 
-            if pos.entry_price != 0.00 && pos.exit_price != 0.00 {
+            if pos.entry_price != dec!(0.00) && pos.exit_price != dec!(0.00) {
                 let pnl_percent = Helper::pnl_percent(
-                    pos.entry_price,
-                    pos.exit_price,
+                    Helper::decimal_to_f64(pos.entry_price),
+                    Helper::decimal_to_f64(pos.exit_price),
                     //pos.leverage.unwrap_or(self.config.leverage),
                     pos.position.unwrap_or(bot::Position::Flat),
                 );
@@ -156,11 +158,13 @@ impl Graph {
     }
 
     /// PnL and ROI relative to the margin you actually put up.
-    fn pnl_and_roi(&mut self, pos: &bot::ClosedPosition) -> (f64, f64) {
+    fn pnl_and_roi(&mut self, pos: &bot::ClosedPosition) -> (Decimal, Decimal) {
+        let dec_config_margin = Helper::f64_to_decimal(self.config.margin);
+        let dec_config_leverage = Helper::f64_to_decimal(self.config.leverage);
         let qty = Helper::contract_amount(
             pos.entry_price,
-            pos.margin.unwrap_or(self.config.margin),
-            pos.leverage.unwrap_or(self.config.leverage),
+            pos.margin.unwrap_or(dec_config_margin),
+            pos.leverage.unwrap_or(dec_config_leverage),
         );
 
         let pnl = Helper::compute_pnl(
@@ -170,12 +174,12 @@ impl Graph {
             pos.exit_price,
         );
 
-        let margin = pos.margin.unwrap_or(self.config.margin);
+        let margin = pos.margin.unwrap_or(dec_config_margin);
 
-        let mut roi: f64 = 0.00; // fraction – multiply by 100 for percent
+        let mut roi: Decimal = dec!(0.00); // fraction – multiply by 100 for percent
 
         //if pnl != 0.00 && margin != 0.00 {
-        if pnl.is_finite() && margin.is_finite() && pnl != 0.00 && margin != 0.00 {
+        if pnl.is_zero() && margin.is_zero() && pnl != dec!(0.00) && margin != dec!(0.00) {
             roi = Helper::calc_roi(
                 &mut Helper::from_config(),
                 margin,
@@ -194,7 +198,7 @@ impl Graph {
     ) -> anyhow::Result<()> {
         let mut positions = Self::load_all_closed_positions(&mut conn).await?;
 
-        let margin_config = self.config.margin;
+        let margin_config = Helper::f64_to_decimal(self.config.margin);
 
         // 2️⃣ Sort chronologically – we use exit_time as the definitive moment of closure
         positions.sort_by_key(|p| p.exit_time);
@@ -208,7 +212,7 @@ impl Graph {
             "{:<36} {:<36} {:<6} {:>10} {:>10} {:>4.3} {:>4.3}",
             "Date", "ID", "Side", "Entry", "Exit", "PnL ($)", "ROI (%)"
         );
-        let mut total_pnl: f64 = 0.0;
+        let mut total_pnl: Decimal = dec!(0.00);
 
         let exists: usize = conn.exists(TRADING_CAPITAL).await?;
 
@@ -218,8 +222,8 @@ impl Graph {
             raw_margin = conn.get(TRADING_CAPITAL).await?;
         }
 
-        let mut total_margin: f64 =
-            serde_json::from_str::<Option<f64>>(&raw_margin)?.unwrap_or_else(|| self.config.margin);
+        let mut total_margin: Decimal = serde_json::from_str::<Option<Decimal>>(&raw_margin)?
+            .unwrap_or_else(|| Helper::f64_to_decimal(self.config.margin));
 
         for pos in &positions {
             let (pnl, roi) = Self::pnl_and_roi(self, pos);
@@ -246,15 +250,15 @@ impl Graph {
             total_margin
         );
 
-        let overall_roi = if total_margin.is_finite() && total_pnl.is_finite() {
+        let overall_roi = if !total_margin.is_zero() && !total_pnl.is_zero() {
             //total_margin != 0.0
             total_pnl / total_margin
         } else {
-            0.0
+            dec!(0.00)
         };
         println!(
             "Overall ROI on the capital you actually put in: {:.2}%",
-            overall_roi * 100.0
+            Helper::decimal_to_f64(overall_roi) * 100.0
         );
 
         println!("--- Cumulative ROI % per week ---");
