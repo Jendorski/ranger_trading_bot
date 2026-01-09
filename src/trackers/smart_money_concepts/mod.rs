@@ -5,7 +5,7 @@ use log::info;
 use redis::AsyncCommands;
 use tokio::time;
 
-use crate::bot::{Zone, Zones};
+use crate::bot::zones::{Side, Zone, Zones};
 use crate::config::Config;
 use crate::exchange::bitget::{self, Candle, CandleData, HttpCandleData};
 use crate::exchange::{Exchange, HttpExchange};
@@ -451,6 +451,7 @@ impl SmcEngine {
             let new_short_zone = Zone {
                 low: new_short_zone_low,
                 high: new_short_zone_high,
+                side: Side::Short,
             };
             info!("new_short_zone: {:?}", new_short_zone);
 
@@ -460,6 +461,7 @@ impl SmcEngine {
             let new_long_zone = Zone {
                 low: new_long_zone_low,
                 high: new_long_zone_high,
+                side: Side::Long,
             };
             info!("new_long_zone: {:?}", new_long_zone);
 
@@ -495,6 +497,7 @@ impl SmcEngine {
             let new_long_zone = Zone {
                 low: new_long_zone_low,
                 high: new_long_zone_high,
+                side: Side::Long,
             };
             info!("new_long_zone: {:?}", new_long_zone);
 
@@ -507,6 +510,7 @@ impl SmcEngine {
             let new_short_zone = Zone {
                 low: new_short_zone_low,
                 high: new_short_zone_high,
+                side: Side::Short,
             };
             info!("new_short_zone: {:?}", new_short_zone);
 
@@ -726,6 +730,7 @@ async fn smc_main(conn: &mut redis::aio::MultiplexedConnection, timeframe: Strin
                     sweep_lows.push(Zone {
                         low: low_low,
                         high: price,
+                        side: Side::Long,
                     });
                 }
                 SMCEvent::StrongHigh {
@@ -738,6 +743,7 @@ async fn smc_main(conn: &mut redis::aio::MultiplexedConnection, timeframe: Strin
                     sweep_highs.push(Zone {
                         low: price,
                         high: high_high,
+                        side: Side::Short,
                     });
                 }
                 _ => {}

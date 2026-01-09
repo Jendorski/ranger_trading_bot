@@ -2,6 +2,9 @@ use crate::exchange::bitget::Candle;
 use crate::{bot::Position, config::Config};
 use anyhow::{anyhow, Result};
 use chrono::{Datelike, Duration as ChronoDuration, Local, TimeZone, Timelike, Utc};
+use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive};
+use rust_decimal::Decimal;
+use rust_decimal_macros::dec;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -50,13 +53,15 @@ pub struct Helper {
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq)]
 pub struct PartialProfitTarget {
     /// The price at which we want to take profit.
-    pub target_price: f64,
+    pub target_price: Decimal,
 
     /// Fraction of *remaining* quantity to close (0.0–1.0).
-    pub fraction: f64,
+    pub fraction: Decimal,
 
     //The SL the Position MUST be in when the target price is hit
-    pub sl: f64,
+    pub sl: Option<Decimal>,
+
+    pub size_btc: Decimal,
 }
 
 impl fmt::Display for PartialProfitTarget {
@@ -65,8 +70,8 @@ impl fmt::Display for PartialProfitTarget {
             f,
             "TP @ {:.2}  →  SL @ {:.2}  (close {:.0}% of remaining)",
             self.target_price,
-            self.sl,
-            self.fraction * 100.0
+            self.sl.unwrap_or(dec!(0.00)),
+            self.fraction.to_f64().unwrap() * 100.0
         )
     }
 }
@@ -79,59 +84,59 @@ impl Helper {
 
     pub fn compute_pnl(
         pos: Position,
-        entry_price: f64,
-        position_size: f64,
-        exit_price: f64,
-    ) -> f64 {
-        let mut pnl_diff = 0.00;
+        entry_price: Decimal,
+        position_size: Decimal,
+        exit_price: Decimal,
+    ) -> Decimal {
+        let mut pnl_diff = dec!(0.00);
 
-        if !entry_price.is_finite() || !exit_price.is_finite() {
-            return 0.00;
+        if !entry_price.is_sign_positive() || !exit_price.is_sign_positive() {
+            return dec!(0.00);
         }
 
-        if pos == Position::Long && exit_price != 0.00 && entry_price != 0.00 {
+        if pos == Position::Long && exit_price != dec!(0.00) && entry_price != dec!(0.00) {
             pnl_diff = exit_price - entry_price;
         }
 
-        if pos == Position::Short && exit_price != 0.00 && entry_price != 0.00 {
+        if pos == Position::Short && exit_price != dec!(0.00) && entry_price != dec!(0.00) {
             pnl_diff = entry_price - exit_price;
         }
 
         if pos == Position::Flat {
-            pnl_diff = 0.00;
+            pnl_diff = dec!(0.00);
         }
 
         let pos_size = position_size;
 
-        if pnl_diff.is_finite() && pos_size.is_finite() {
+        if pnl_diff.is_sign_positive() && pos_size.is_sign_positive() {
             return pnl_diff * pos_size;
         }
 
-        return 0.00;
+        return dec!(0.00);
     }
 
-    pub fn position_size(margin: f64, leverage: f64) -> f64 {
+    pub fn position_size(margin: Decimal, leverage: Decimal) -> Decimal {
         margin * leverage
     }
 
     pub fn calc_roi(
         &mut self,
-        margin: f64,
-        entry_price: f64,
+        margin: Decimal,
+        entry_price: Decimal,
         pos: Position,
-        position_size: f64,
-        exit_price: f64,
-    ) -> f64 {
+        position_size: Decimal,
+        exit_price: Decimal,
+    ) -> Decimal {
         let pnl = Self::compute_pnl(pos, entry_price, position_size, exit_price);
 
-        let mut roi: f64 = 0.00; // fraction – multiply by 100 for percent
+        let mut roi: Decimal = dec!(0.00); // fraction – multiply by 100 for percent
 
-        if pnl.is_finite() && margin.is_finite() {
-            roi = (pnl / margin) * 100.0;
+        if pnl.is_sign_positive() && margin.is_sign_positive() {
+            roi = (pnl / margin) * dec!(100.0);
         }
 
-        if pnl != 0.00 && margin != 0.00 {
-            roi = (pnl / margin) * 100.0;
+        if pnl != dec!(0.00) && margin != dec!(0.00) {
+            roi = (pnl / margin) * dec!(100.0);
         }
         roi
     }
@@ -139,7 +144,7 @@ impl Helper {
     //Function to calculate the amount of the crypto (BTC in this case) bought in the Futures.
     //If your margin, for example is 50 USDT with a leverage of 20, total is 1000 USDT
     //This function then calculates the amount of BTC bought with that 1000 USDT
-    pub fn contract_amount(entry_price: f64, margin: f64, leverage: f64) -> f64 {
+    pub fn contract_amount(entry_price: Decimal, margin: Decimal, leverage: Decimal) -> Decimal {
         let position_size = Self::position_size(margin, leverage);
         let btc_amount = position_size / entry_price;
 
@@ -188,12 +193,12 @@ impl Helper {
     }
 
     pub fn stop_loss_price(
-        entry_price: f64,
-        margin: f64,
-        leverage: f64,
-        risk_pct: f64,
+        entry_price: Decimal,
+        margin: Decimal,
+        leverage: Decimal,
+        risk_pct: Decimal,
         pos: Position,
-    ) -> f64 {
+    ) -> Decimal {
         let desired_loss = margin * risk_pct; // $4.65
         let position_size = Helper::position_size(margin, leverage);
         let delta_price = (desired_loss / position_size) * entry_price; //desired_loss / quantity; // how many dollars of price change
@@ -206,11 +211,11 @@ impl Helper {
             return entry_price + delta_price;
         }
 
-        0.00
+        dec!(0.00)
     }
 
     //Function to trigger Stop Loss
-    pub fn ssl_hit(current_price: f64, side: Position, sl: f64) -> bool {
+    pub fn ssl_hit(current_price: Decimal, side: Position, sl: Decimal) -> bool {
         if side == Position::Long {
             return current_price <= sl;
         }
@@ -223,17 +228,17 @@ impl Helper {
     }
 
     fn tp_prices(
-        ranger_price_difference: f64,
-        entry_price: f64,
+        ranger_price_difference: Decimal,
+        entry_price: Decimal,
         tp_counts: usize,
         pos: Position,
-    ) -> Vec<f64> {
+    ) -> Vec<Decimal> {
         let ranger_price_difference = ranger_price_difference;
 
         let mut count = 0;
         let mut tp = entry_price;
 
-        let mut tp_pr: Vec<f64> = Vec::with_capacity(tp_counts);
+        let mut tp_pr: Vec<Decimal> = Vec::with_capacity(tp_counts);
 
         while count < tp_counts {
             if pos == Position::Long {
@@ -251,50 +256,118 @@ impl Helper {
         tp_pr
     }
 
+    pub fn f64_to_decimal(val: f64) -> Decimal {
+        Decimal::from_f64(val).unwrap()
+    }
+
+    pub fn decimal_to_f64(val: Decimal) -> f64 {
+        val.to_f64().unwrap()
+    }
+
     pub fn build_profit_targets(
-        entry_price: f64,
-        ranger_price_difference: f64,
+        entry_price: Decimal,
+        margin: Decimal,
+        leverage: Decimal,
+        ranger_price_difference: Decimal,
         pos: Position,
     ) -> Vec<PartialProfitTarget> {
+        // assert_eq!(tp_prices.len(), fractions.len());
+        // assert_eq!(fractions.iter().copied().sum::<Decimal>(), dec!(1));
+
+        // BTC precision (e.g. 5 or 6)
+        let size_precision: u32 = 5;
+
         let tp_counts: usize = 4;
+        let tp_prices: Vec<Decimal> =
+            Helper::tp_prices(ranger_price_difference, entry_price, tp_counts, pos);
 
-        let fractions: Option<&[f64]> = Some(&[0.20, 0.30, 0.30, 0.20]);
+        let fractions: &[Decimal] = &[dec!(0.20), dec!(0.30), dec!(0.30), dec!(0.20)];
 
-        let tp_prices = Helper::tp_prices(ranger_price_difference, entry_price, tp_counts, pos);
+        // Total notional
+        let notional = margin * leverage;
 
-        // Default fraction = 25 % if not supplied.
-        let default_frac = 0.25;
-        let fracs: Vec<f64> = match fractions {
-            Some(f) => f.iter().copied().collect(),
-            None => vec![default_frac; tp_prices.len()],
-        };
+        // Total position size in BTC
+        let total_size = (notional / entry_price).round_dp(size_precision);
 
-        let mut targets = Vec::with_capacity(tp_prices.len());
+        let mut remaining = total_size;
+        let mut ladder = Vec::with_capacity(tp_prices.len());
 
-        for (i, &tp) in tp_prices.iter().enumerate() {
-            // Determine the new stop‑loss after this TP.
-            let new_sl = if i == 0 {
-                entry_price // move SL to entry price
-                            //(entry_price + tp) / 2.0 //the new Stop Loss is now calculated as the midpoint (equidistance) between the entry_price and the target price
-            } else if i == 1 {
-                tp_prices[0] //entry_price // TP2 → SL is moved to TP1
+        for i in 0..tp_prices.len() {
+            let is_last = i == tp_prices.len() - 1;
+
+            let size = if is_last {
+                // absorb rounding remainder
+                remaining
             } else {
-                tp_prices[i - 2] // TP3+ → the target two steps before
+                let raw = (total_size * fractions[i])
+                    .round_dp_with_strategy(size_precision, rust_decimal::RoundingStrategy::ToZero);
+
+                remaining -= raw;
+                raw
             };
 
-            let fraction = fracs.get(i).copied().unwrap_or(default_frac);
+            // ---- SL LOGIC ----
+            let next_sl = if is_last {
+                None
+            } else if i == 0 {
+                // After TP1 → SL moves to entry
+                Some(entry_price)
+            } else {
+                // After TPn → SL moves to previous TP price
+                Some(tp_prices[i - 1])
+            };
 
-            targets.push(PartialProfitTarget {
-                target_price: tp,
-                sl: new_sl,
-                fraction,
+            ladder.push(PartialProfitTarget {
+                target_price: tp_prices[i],
+                fraction: fractions[i],
+                size_btc: size,
+                sl: next_sl,
             });
         }
 
-        targets
+        ladder
     }
 
-    pub fn funding_multiplier(funding_rate: f64, pos: Position) -> f64 {
+    // pub fn build_profit_targets(
+    //     entry_price: f64,
+    //     ranger_price_difference: f64,
+    //     pos: Position,
+    // ) -> Vec<PartialProfitTarget> {
+    //     let tp_counts: usize = 4;
+
+    //     let fracs: [f64; 4] = [0.20, 0.30, 0.30, 0.20];
+
+    //     let tp_prices = Helper::tp_prices(ranger_price_difference, entry_price, tp_counts, pos);
+
+    //     // Default fraction = 25 % if not supplied.
+    //     let default_frac = 0.25;
+
+    //     let mut targets = Vec::with_capacity(tp_prices.len());
+
+    //     for (i, &tp) in tp_prices.iter().enumerate() {
+    //         // Determine the new stop‑loss after this TP.
+    //         let new_sl = if i == 0 {
+    //             entry_price // move SL to entry price
+    //                         //(entry_price + tp) / 2.0 //the new Stop Loss is now calculated as the midpoint (equidistance) between the entry_price and the target price
+    //         } else if i == 1 {
+    //             tp_prices[0] //entry_price // TP2 → SL is moved to TP1
+    //         } else {
+    //             tp_prices[i - 2] // TP3+ → the target two steps before
+    //         };
+
+    //         let fraction = fracs.get(i).copied().unwrap_or(default_frac);
+
+    //         targets.push(PartialProfitTarget {
+    //             target_price: tp,
+    //             sl: new_sl,
+    //             fraction,
+    //         });
+    //     }
+
+    //     targets
+    // }
+
+    pub fn funding_multiplier(funding_rate: f64, pos: Position) -> Decimal {
         let scale = 800.0; // Adjust sensitivity
         let mut multiplier = 1.0;
 
@@ -305,7 +378,7 @@ impl Helper {
         }
 
         // Clamp between 0.5 and 1.5 to avoid extreme position sizing
-        multiplier.clamp(0.5, 1.5)
+        Helper::f64_to_decimal(multiplier.clamp(0.5, 1.5))
     }
 
     pub fn extract_into_weekly_candle(path: &str, output_path: &str) -> Result<()> {
