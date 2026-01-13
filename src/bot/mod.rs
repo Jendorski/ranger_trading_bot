@@ -483,6 +483,10 @@ impl<'a> Bot<'a> {
             .fees
             .calc_pnl_for_exit(self.open_pos.clone(), price)
             .await;
+        info!(
+            "close_short_position: pnl, pnl_after_fees, exit_fees -> {:?}, {:?}, {:?}",
+            pnl, pnl_after_fees, exit_fee
+        );
         let roi = Helper::calc_roi(
             &mut Helper::from_config(),
             self.open_pos
@@ -499,7 +503,7 @@ impl<'a> Bot<'a> {
             exit_price: price,
             exit_time: Utc::now(),
             position: Some(Position::Short),
-            side: None,
+            side: Some(Position::Short),
             entry_time: self.open_pos.entry_time,
             pnl,
             quantity: Some(self.open_pos.position_size),

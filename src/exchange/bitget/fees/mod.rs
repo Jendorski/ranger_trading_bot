@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::bot::{OpenPosition, Position};
 use crate::exchange::bitget::{deserialize_string_to_f64, ApiResponse};
+use crate::helper::Helper;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ExecutionType {
@@ -104,11 +105,12 @@ impl BitgetFuturesFees {
         exit_price: Decimal,
         size: Decimal,
     ) -> Decimal {
-        match side {
-            Position::Long => (exit_price - entry_price) * size,
-            Position::Short => (entry_price - exit_price) * size,
-            Position::Flat => dec!(0.00),
-        }
+        // match side {
+        //     Position::Long => (exit_price - entry_price) * size,
+        //     Position::Short => (entry_price - exit_price) * size,
+        //     Position::Flat => dec!(0.00),
+        // }
+        Helper::compute_pnl(side, entry_price, size, exit_price)
     }
 
     //Always using taker fee for entry
