@@ -440,6 +440,8 @@ impl<'a> Bot<'a> {
 
     pub async fn prepare_current_margin(&mut self, pnl: Decimal) -> Decimal {
         let mut current_margin = Self::load_current_margin(&mut self.redis_conn, self.config).await;
+        info!("redis_current_margin: {:?}", current_margin);
+        info!("prepare_current_margin pnl: {:?}", pnl);
 
         current_margin += pnl;
         info!("current_margin, {:2}", current_margin);
@@ -997,7 +999,6 @@ impl<'a> Bot<'a> {
             .partial_profit_target
             .iter()
             .position(|t| dec_price <= t.target_price);
-        info!("idx_opt: {:?}", idx_opt);
 
         let idx = idx_opt.unwrap_or(usize::MAX);
 

@@ -179,7 +179,7 @@ impl Graph {
         let mut roi: Decimal = dec!(0.00); // fraction – multiply by 100 for percent
 
         //if pnl != 0.00 && margin != 0.00 {
-        if pnl.is_zero() && margin.is_zero() && pnl != dec!(0.00) && margin != dec!(0.00) {
+        if !pnl.is_zero() && !margin.is_zero() {
             roi = Helper::calc_roi(
                 &mut Helper::from_config(),
                 margin,

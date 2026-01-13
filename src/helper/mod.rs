@@ -131,11 +131,7 @@ impl Helper {
 
         let mut roi: Decimal = dec!(0.00); // fraction – multiply by 100 for percent
 
-        if pnl.is_sign_positive() && margin.is_sign_positive() {
-            roi = (pnl / margin) * dec!(100.0);
-        }
-
-        if pnl != dec!(0.00) && margin != dec!(0.00) {
+        if pnl != dec!(0.00) && !margin.is_zero() {
             roi = (pnl / margin) * dec!(100.0);
         }
         roi
@@ -146,6 +142,9 @@ impl Helper {
     //This function then calculates the amount of BTC bought with that 1000 USDT
     pub fn contract_amount(entry_price: Decimal, margin: Decimal, leverage: Decimal) -> Decimal {
         let position_size = Self::position_size(margin, leverage);
+        if entry_price.is_zero() {
+            return dec!(0.00);
+        }
         let btc_amount = position_size / entry_price;
 
         btc_amount
@@ -201,6 +200,9 @@ impl Helper {
     ) -> Decimal {
         let desired_loss = margin * risk_pct; // $4.65
         let position_size = Helper::position_size(margin, leverage);
+        if position_size.is_zero() {
+            return dec!(0.00);
+        }
         let delta_price = (desired_loss / position_size) * entry_price; //desired_loss / quantity; // how many dollars of price change
 
         if pos == Position::Long {
@@ -287,7 +289,11 @@ impl Helper {
         let notional = margin * leverage;
 
         // Total position size in BTC
-        let total_size = (notional / entry_price).round_dp(size_precision);
+        let total_size = if entry_price.is_zero() {
+            dec!(0.00)
+        } else {
+            (notional / entry_price).round_dp(size_precision)
+        };
 
         let mut remaining = total_size;
         let mut ladder = Vec::with_capacity(tp_prices.len());
@@ -513,5 +519,54 @@ impl Helper {
             candles.push(candle);
         }
         Ok(candles)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    #[test]
+    fn test_calc_roi_zero_margin() {
+        let mut helper = Helper::from_config();
+        let roi = helper.calc_roi(
+            dec!(0.00),
+            dec!(50000.0),
+            Position::Long,
+            dec!(1.0),
+            dec!(51000.0),
+        );
+        assert_eq!(roi, dec!(0.00));
+    }
+
+    #[test]
+    fn test_contract_amount_zero_price() {
+        let amount = Helper::contract_amount(dec!(0.00), dec!(100.0), dec!(20.0));
+        assert_eq!(amount, dec!(0.00));
+    }
+
+    #[test]
+    fn test_stop_loss_price_zero_pos_size() {
+        let sl = Helper::stop_loss_price(
+            dec!(50000.0),
+            dec!(0.00), // Zero margin -> Zero position size
+            dec!(20.0),
+            dec!(0.1),
+            Position::Long,
+        );
+        assert_eq!(sl, dec!(0.00));
+    }
+
+    #[test]
+    fn test_build_profit_targets_zero_price() {
+        let targets = Helper::build_profit_targets(
+            dec!(0.00),
+            dec!(100.0),
+            dec!(20.0),
+            dec!(1000.0),
+            Position::Long,
+        );
+        assert!(targets.is_empty() || targets.iter().all(|t| t.size_btc.is_zero()));
     }
 }
