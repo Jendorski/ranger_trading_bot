@@ -326,7 +326,7 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
-    pub async fn close_long_position(&mut self, price: Decimal) {
+    pub async fn close_long_position(&mut self, price: Decimal) -> Result<()> {
         let dec_config_margin = Helper::f64_to_decimal(self.config.margin);
         let roi = Helper::calc_roi(
             &mut Helper::from_config(),
@@ -370,32 +370,34 @@ impl<'a> Bot<'a> {
         //update the margin based on the pnl
         let _ = Self::prepare_current_margin(self, pnl_after_fees).await;
 
-        //let _ = self.store_loss_count(pnl).await;
-
         //Track loss count
         let total_profit_count = 4;
+        //This means that we did not hit any of the targets
         if self.partial_profit_target.len() == total_profit_count {
             //Track also the zone where we got a loss
             let zone = self
                 .zones
                 .long_zones
                 .iter()
-                .find(|z| z.contains(Helper::decimal_to_f64(self.open_pos.entry_price)))
-                .unwrap();
-            let zone_id = ZoneId::from_zone(zone);
-            self.zone_guard
-                .record_trade_result(zone_id, Helper::decimal_to_f64(pnl_after_fees))
-                .await;
+                .find(|z| z.contains(Helper::decimal_to_f64(self.open_pos.entry_price)));
 
-            //This means that we did not hit any of the targets
-            self.loss_count += 1;
-            info!("Loss count: {}", self.loss_count);
-            let total_loss_count = 2;
-            if self.loss_count >= total_loss_count {
-                self.pos = Position::Flat;
-                let _ = self.store_loss_count(pnl_after_fees).await;
+            if !zone.is_none() {
+                warn!(
+                    "Losing zone found for price: {}; zone: {:?}",
+                    self.open_pos.entry_price,
+                    zone.unwrap()
+                );
+                let zone_id = ZoneId::from_zone(zone.unwrap());
+                self.zone_guard
+                    .record_trade_result(zone_id, Helper::decimal_to_f64(pnl_after_fees))
+                    .await;
             }
+
+            info!("Loss count: {}", self.loss_count);
+            let _ = self.store_loss_count(pnl_after_fees).await;
         }
+        self.loss_count = Self::load_loss_count(&mut self.redis_conn).await?;
+        Ok(())
     }
 
     async fn store_loss_count(&mut self, pnl: Decimal) -> Result<()> {
@@ -472,7 +474,7 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
-    pub async fn close_short_position(&mut self, price: Decimal) {
+    pub async fn close_short_position(&mut self, price: Decimal) -> Result<()> {
         let pnl = Helper::compute_pnl(
             self.open_pos.pos,
             self.open_pos.entry_price,
@@ -522,28 +524,33 @@ impl<'a> Bot<'a> {
 
         //Track loss count
         let total_profit_count = 4;
+        //This means that we did not hit any of the targets
         if self.partial_profit_target.len() == total_profit_count {
             //Track also the zone where we got a loss
             let zone = self
                 .zones
                 .short_zones
                 .iter()
-                .find(|z| z.contains(Helper::decimal_to_f64(self.open_pos.entry_price)))
-                .unwrap();
-            let zone_id = ZoneId::from_zone(zone);
-            self.zone_guard
-                .record_trade_result(zone_id, Helper::decimal_to_f64(pnl_after_fees))
-                .await;
+                .find(|z| z.contains(Helper::decimal_to_f64(self.open_pos.entry_price)));
 
-            //This means that we did not hit any of the targets
-            self.loss_count += 1;
-            info!("Loss count: {}", self.loss_count);
-            let total_loss_count = 2;
-            if self.loss_count >= total_loss_count {
-                self.pos = Position::Flat;
-                let _ = self.store_loss_count(pnl_after_fees).await;
+            if !zone.is_none() {
+                warn!(
+                    "Losing zone found for price: {}; zone: {:?}",
+                    self.open_pos.entry_price,
+                    zone.unwrap()
+                );
+                let zone_id = ZoneId::from_zone(zone.unwrap());
+                self.zone_guard
+                    .record_trade_result(zone_id, Helper::decimal_to_f64(pnl_after_fees))
+                    .await;
             }
+
+            let _ = self.store_loss_count(pnl_after_fees).await;
         }
+
+        self.loss_count = Self::load_loss_count(&mut self.redis_conn).await?;
+
+        Ok(())
     }
 
     pub async fn take_profit_on_long(
@@ -560,7 +567,7 @@ impl<'a> Bot<'a> {
 
         info!("Ranger Closed LONG at {:?}", exec_price);
 
-        Self::close_long_position(self, price).await;
+        let _: () = Self::close_long_position(self, price).await?;
 
         self.pos = Position::Flat;
 
@@ -580,7 +587,7 @@ impl<'a> Bot<'a> {
         let dec_price = Helper::f64_to_decimal(price);
 
         if qty_to_close <= dec!(0.0000) {
-            Self::close_long_position(self, dec_price).await;
+            let _: () = Self::close_long_position(self, dec_price).await?;
         }
 
         if self.partial_profit_target.len() == 0 {
@@ -597,7 +604,7 @@ impl<'a> Bot<'a> {
         if remaining_size <= dec!(0.0000) {
             self.open_pos.quantity = Some(remaining_size);
             self.open_pos.position_size = remaining_size;
-            Self::close_long_position(self, dec_price).await;
+            let _: () = Self::close_long_position(self, dec_price).await?;
         }
 
         let roi = Helper::calc_roi(
@@ -694,7 +701,7 @@ impl<'a> Bot<'a> {
         let dec_price = Helper::f64_to_decimal(price);
 
         if qty_to_close <= dec!(0.0000) {
-            Self::close_short_position(self, dec_price).await;
+            let _: () = Self::close_short_position(self, dec_price).await?;
         }
 
         if self.partial_profit_target.len() == 0 {
@@ -711,7 +718,7 @@ impl<'a> Bot<'a> {
         if remaining_size <= dec!(0.0000) {
             self.open_pos.quantity = Some(remaining_size);
             self.open_pos.position_size = remaining_size;
-            Self::close_short_position(self, dec_price).await;
+            let _: () = Self::close_short_position(self, dec_price).await?;
         }
 
         let roi = Helper::calc_roi(
@@ -813,7 +820,7 @@ impl<'a> Bot<'a> {
 
         info!("Ranger Covered SHORT at {:?}", exec_price);
 
-        Self::close_short_position(self, dec_price).await;
+        let _: () = Self::close_short_position(self, dec_price).await?;
 
         self.pos = Position::Flat;
 
@@ -1040,7 +1047,64 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
-    pub async fn test(&mut self) -> Result<()> {
+    pub async fn test(&mut self, exchange: &dyn Exchange) -> Result<()> {
+        self.loss_count = Self::load_loss_count(&mut self.redis_conn)
+            .await
+            .unwrap_or(0);
+        warn!("loss_count before: {:?}", self.loss_count);
+        let open_pos: OpenPosition = OpenPosition {
+            id: Uuid::new_v4(),
+            pos: Position::Long,
+            entry_price: dec!(94215.1),
+            position_size: dec!(0.0310238376870843454619680069),
+            entry_time: Utc::now(),
+            tp: Some(dec!(98012.0)),
+            sl: Some(dec!(92325.0253750000000000000000)),
+            margin: Some(dec!(140.0)),
+            quantity: Some(dec!(0.0310238376870843454619680069)),
+            leverage: Some(dec!(20.0)),
+            risk_pct: Some(dec!(0.075)),
+            order_id: Some("".to_string()),
+        };
+
+        let exit_price = dec!(91061.1);
+        let pnl = Helper::compute_pnl(
+            open_pos.pos,
+            open_pos.entry_price,
+            open_pos.position_size,
+            exit_price,
+        );
+        warn!("PnL: {:?}", pnl);
+
+        self.partial_profit_target = Vec::new();
+        self.partial_profit_target.push(PartialProfitTarget {
+            target_price: dec!(95664.424999999997),
+            sl: Some(dec!(92325.0253750000000000000000)),
+            fraction: dec!(20.0),
+            size_btc: dec!(0.00858),
+        });
+        self.partial_profit_target.push(PartialProfitTarget {
+            target_price: dec!(96113.749999999994),
+            sl: Some(dec!(92664.424999999997)),
+            fraction: dec!(30.0),
+            size_btc: dec!(0.00858),
+        });
+        self.partial_profit_target.push(PartialProfitTarget {
+            target_price: dec!(99563.074999999991),
+            sl: Some(dec!(96113.749999999994)),
+            fraction: dec!(30.0),
+            size_btc: dec!(0.00858),
+        });
+        self.partial_profit_target.push(PartialProfitTarget {
+            target_price: dec!(108012.0),
+            sl: None,
+            fraction: dec!(20.0),
+            size_btc: dec!(0.00572),
+        });
+
+        self.open_pos = open_pos;
+        let _: () = self.close_long_position(exit_price).await?;
+
         Ok(())
     }
 
@@ -1181,7 +1245,7 @@ impl<'a> Bot<'a> {
                     Helper::ssl_hit(dec_price, self.pos, self.open_pos.sl.unwrap_or(in_sl));
 
                 if ssl_hit {
-                    Self::close_long_position(self, dec_price).await;
+                    let _: () = Self::close_long_position(self, dec_price).await?;
 
                     warn!(
                         "SL for Ranger Long Position entered at {:2}, with SL triggered at {:2}",
@@ -1220,7 +1284,7 @@ impl<'a> Bot<'a> {
                     Helper::ssl_hit(dec_price, self.pos, self.open_pos.sl.unwrap_or(in_sl));
 
                 if ssl_hit {
-                    Self::close_short_position(self, dec_price).await;
+                    let _: () = Self::close_short_position(self, dec_price).await?;
 
                     warn!(
                         "SL for Ranger Short Position entered at {:2}, with SL triggered at {:2}",

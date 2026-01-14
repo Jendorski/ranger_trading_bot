@@ -9,6 +9,7 @@ use crate::exchange::HttpExchange;
 
 mod bot;
 mod cache;
+mod calendar;
 mod config;
 mod encryption;
 mod exchange;
@@ -61,7 +62,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     info!("Starting bot loop...");
 
-    if let Err(e) = bot.start_live_trading(exchange.as_ref()).await {
+    if let Err(e) = bot.test(exchange.as_ref()).await {
+        //bot.start_live_trading(exchange.as_ref()).await {
+
         log::error!("Bot loop error: {}", e);
     }
 

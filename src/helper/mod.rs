@@ -2,6 +2,7 @@ use crate::exchange::bitget::Candle;
 use crate::{bot::Position, config::Config};
 use anyhow::{anyhow, Result};
 use chrono::{Datelike, Duration as ChronoDuration, Local, TimeZone, Timelike, Utc};
+use log::{info, warn};
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
@@ -91,6 +92,7 @@ impl Helper {
         let mut pnl_diff = dec!(0.00);
 
         if !entry_price.is_sign_positive() || !exit_price.is_sign_positive() {
+            warn!("compute_pnl::Invalid entry or exit price");
             return dec!(0.00);
         }
 
@@ -108,7 +110,7 @@ impl Helper {
 
         let pos_size = position_size;
 
-        if pnl_diff.is_sign_positive() && pos_size.is_sign_positive() {
+        if pnl_diff != dec!(0.00) && pos_size != dec!(0.00) {
             return pnl_diff * pos_size;
         }
 
