@@ -14,6 +14,7 @@ use uuid::Uuid;
 use crate::bot::zones::ZoneGuard;
 use crate::bot::zones::ZoneId;
 use crate::bot::zones::{Zone, Zones};
+use crate::calendar::MacroGuard;
 use crate::config::Config;
 use crate::exchange::bitget::fees::BitgetFuturesFees;
 use crate::exchange::bitget::BitgetWsClient;
@@ -165,6 +166,8 @@ pub struct Bot<'a> {
     fees: BitgetFuturesFees,
 
     zone_guard: ZoneGuard,
+
+    macro_guard: MacroGuard,
 }
 
 impl<'a> Bot<'a> {
@@ -198,6 +201,8 @@ impl<'a> Bot<'a> {
 
         let zone_guard = ZoneGuard::new(2, conn.clone(), 60 * 60 * 8);
 
+        let macro_guard = MacroGuard::new(&mut conn.clone()).await?;
+
         Ok(Self {
             pos,
             zones,
@@ -210,6 +215,7 @@ impl<'a> Bot<'a> {
             fees,
             zone_guard,
             //smc,
+            macro_guard,
         })
     }
 
@@ -1048,63 +1054,6 @@ impl<'a> Bot<'a> {
     }
 
     pub async fn test(&mut self, exchange: &dyn Exchange) -> Result<()> {
-        self.loss_count = Self::load_loss_count(&mut self.redis_conn)
-            .await
-            .unwrap_or(0);
-        warn!("loss_count before: {:?}", self.loss_count);
-        let open_pos: OpenPosition = OpenPosition {
-            id: Uuid::new_v4(),
-            pos: Position::Long,
-            entry_price: dec!(94215.1),
-            position_size: dec!(0.0310238376870843454619680069),
-            entry_time: Utc::now(),
-            tp: Some(dec!(98012.0)),
-            sl: Some(dec!(92325.0253750000000000000000)),
-            margin: Some(dec!(140.0)),
-            quantity: Some(dec!(0.0310238376870843454619680069)),
-            leverage: Some(dec!(20.0)),
-            risk_pct: Some(dec!(0.075)),
-            order_id: Some("".to_string()),
-        };
-
-        let exit_price = dec!(91061.1);
-        let pnl = Helper::compute_pnl(
-            open_pos.pos,
-            open_pos.entry_price,
-            open_pos.position_size,
-            exit_price,
-        );
-        warn!("PnL: {:?}", pnl);
-
-        self.partial_profit_target = Vec::new();
-        self.partial_profit_target.push(PartialProfitTarget {
-            target_price: dec!(95664.424999999997),
-            sl: Some(dec!(92325.0253750000000000000000)),
-            fraction: dec!(20.0),
-            size_btc: dec!(0.00858),
-        });
-        self.partial_profit_target.push(PartialProfitTarget {
-            target_price: dec!(96113.749999999994),
-            sl: Some(dec!(92664.424999999997)),
-            fraction: dec!(30.0),
-            size_btc: dec!(0.00858),
-        });
-        self.partial_profit_target.push(PartialProfitTarget {
-            target_price: dec!(99563.074999999991),
-            sl: Some(dec!(96113.749999999994)),
-            fraction: dec!(30.0),
-            size_btc: dec!(0.00858),
-        });
-        self.partial_profit_target.push(PartialProfitTarget {
-            target_price: dec!(108012.0),
-            sl: None,
-            fraction: dec!(20.0),
-            size_btc: dec!(0.00572),
-        });
-
-        self.open_pos = open_pos;
-        let _: () = self.close_long_position(exit_price).await?;
-
         Ok(())
     }
 
@@ -1112,6 +1061,11 @@ impl<'a> Bot<'a> {
         let dec_price = Decimal::from_f64(price).unwrap();
         if price == 1.11 {
             warn!("Price failure! -> {:?}", price);
+            return Ok(());
+        }
+
+        if !self.macro_guard.allow_entry(Utc::now()) {
+            warn!("Macro guard not allowing entry");
             return Ok(());
         }
 
