@@ -2,7 +2,7 @@ use crate::exchange::bitget::Candle;
 use crate::{bot::Position, config::Config};
 use anyhow::{anyhow, Result};
 use chrono::{Datelike, Duration as ChronoDuration, Local, TimeZone, Timelike, Utc};
-use log::{info, warn};
+use log::warn;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
@@ -275,9 +275,6 @@ impl Helper {
         ranger_price_difference: Decimal,
         pos: Position,
     ) -> Vec<PartialProfitTarget> {
-        // assert_eq!(tp_prices.len(), fractions.len());
-        // assert_eq!(fractions.iter().copied().sum::<Decimal>(), dec!(1));
-
         // BTC precision (e.g. 5 or 6)
         let size_precision: u32 = 5;
 
@@ -319,7 +316,8 @@ impl Helper {
                 None
             } else if i == 0 {
                 // After TP1 → SL moves to entry
-                Some(entry_price)
+                let sl_one = (entry_price + tp_prices[i]) / dec!(2.0);
+                Some(sl_one)
             } else {
                 // After TPn → SL moves to previous TP price
                 Some(tp_prices[i - 1])
@@ -335,45 +333,6 @@ impl Helper {
 
         ladder
     }
-
-    // pub fn build_profit_targets(
-    //     entry_price: f64,
-    //     ranger_price_difference: f64,
-    //     pos: Position,
-    // ) -> Vec<PartialProfitTarget> {
-    //     let tp_counts: usize = 4;
-
-    //     let fracs: [f64; 4] = [0.20, 0.30, 0.30, 0.20];
-
-    //     let tp_prices = Helper::tp_prices(ranger_price_difference, entry_price, tp_counts, pos);
-
-    //     // Default fraction = 25 % if not supplied.
-    //     let default_frac = 0.25;
-
-    //     let mut targets = Vec::with_capacity(tp_prices.len());
-
-    //     for (i, &tp) in tp_prices.iter().enumerate() {
-    //         // Determine the new stop‑loss after this TP.
-    //         let new_sl = if i == 0 {
-    //             entry_price // move SL to entry price
-    //                         //(entry_price + tp) / 2.0 //the new Stop Loss is now calculated as the midpoint (equidistance) between the entry_price and the target price
-    //         } else if i == 1 {
-    //             tp_prices[0] //entry_price // TP2 → SL is moved to TP1
-    //         } else {
-    //             tp_prices[i - 2] // TP3+ → the target two steps before
-    //         };
-
-    //         let fraction = fracs.get(i).copied().unwrap_or(default_frac);
-
-    //         targets.push(PartialProfitTarget {
-    //             target_price: tp,
-    //             sl: new_sl,
-    //             fraction,
-    //         });
-    //     }
-
-    //     targets
-    // }
 
     pub fn funding_multiplier(funding_rate: f64, pos: Position) -> Decimal {
         let scale = 800.0; // Adjust sensitivity
