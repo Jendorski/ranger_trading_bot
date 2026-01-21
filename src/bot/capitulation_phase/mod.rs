@@ -140,7 +140,7 @@ impl CapitulationStrategy {
             info!("Capitulation phase complete. No more trades will be taken.");
             return Ok(());
         }
-        let (entry, sl, tp) = params.unwrap();
+        let (_, sl, tp) = params.unwrap();
 
         info!(
             "Capitulation Phase Active Position state: {:?}",
@@ -148,49 +148,79 @@ impl CapitulationStrategy {
         );
         match &state.active_position {
             None => {
-                // Look for entry
-                if price <= entry && price > (entry - dec!(77.0)) {
-                    // Small buffer for execution
-                    info!(
-                        "Capitulation Phase {:?}: Entering SHORT at {}",
-                        state.current_phase, price
-                    );
+                // Look for entry in ANY phase
+                let all_phases = [
+                    CapitulationPhase::Trade1,
+                    CapitulationPhase::Trade2,
+                    CapitulationPhase::Trade3,
+                    CapitulationPhase::Trade4,
+                    CapitulationPhase::Trade5,
+                    CapitulationPhase::Trade6,
+                    CapitulationPhase::Trade7,
+                    CapitulationPhase::Trade8,
+                    CapitulationPhase::Trade9,
+                    CapitulationPhase::Trade10,
+                    CapitulationPhase::Trade11,
+                    CapitulationPhase::Trade12,
+                    CapitulationPhase::Trade13,
+                    CapitulationPhase::Trade14,
+                    CapitulationPhase::Trade15,
+                ];
 
-                    let quantity =
-                        Helper::contract_amount(price, state.current_capital, self.leverage);
+                for phase in all_phases {
+                    if let Some((entry, sl, tp)) = self.get_trade_params(phase) {
+                        if price <= entry && price > (entry - dec!(77.0)) {
+                            // Small buffer for execution
+                            state.current_phase = phase; // Set the detected phase
+                            info!(
+                                "Capitulation Phase {:?}: Entering SHORT at {}",
+                                state.current_phase, price
+                            );
 
-                    let mut open_pos = OpenPosition {
-                        id: uuid::Uuid::new_v4(),
-                        pos: Position::Short,
-                        entry_price: price,
-                        position_size: quantity,
-                        entry_time: chrono::Utc::now(),
-                        tp: Some(tp),
-                        sl: Some(sl),
-                        margin: Some(state.current_capital),
-                        quantity: Some(quantity),
-                        leverage: Some(self.leverage),
-                        risk_pct: Some(dec!(0.10)),
-                        order_id: None,
-                    };
+                            let quantity = Helper::contract_amount(
+                                price,
+                                state.current_capital,
+                                self.leverage,
+                            );
 
-                    let exec = exchange.place_market_order(open_pos.clone()).await?;
-                    open_pos.order_id = Some(exec.order_id);
-                    state.active_position = Some(open_pos.clone());
+                            let mut open_pos = OpenPosition {
+                                id: uuid::Uuid::new_v4(),
+                                pos: Position::Short,
+                                entry_price: price,
+                                position_size: quantity,
+                                entry_time: chrono::Utc::now(),
+                                tp: Some(tp),
+                                sl: Some(sl),
+                                margin: Some(state.current_capital),
+                                quantity: Some(quantity),
+                                leverage: Some(self.leverage),
+                                risk_pct: Some(dec!(0.10)),
+                                order_id: None,
+                            };
 
-                    // Build partial profit targets
-                    state.partial_profit_targets = Helper::build_profit_targets(
-                        price,
-                        state.current_capital,
-                        self.leverage,
-                        dec!(250.00), // Using 1000 as default diff for building targets
-                        Position::Short,
-                    );
-                    info!(
-                        "Built {:?} partial profit targets",
-                        state.partial_profit_targets
-                    );
-                    CapitulationState::store_state(redis_conn.clone(), state.clone()).await?;
+                            let exec = exchange.place_market_order(open_pos.clone()).await?;
+                            open_pos.order_id = Some(exec.order_id);
+                            state.active_position = Some(open_pos.clone());
+
+                            // Build partial profit targets
+                            state.partial_profit_targets = Helper::build_profit_targets(
+                                price,
+                                state.current_capital,
+                                self.leverage,
+                                dec!(250.00), // Using 1000 as default diff for building targets
+                                Position::Short,
+                            );
+                            info!(
+                                "Built {:?} partial profit targets",
+                                state.partial_profit_targets
+                            );
+                            CapitulationState::store_state(redis_conn.clone(), state.clone())
+                                .await?;
+
+                            // Break after finding the first valid entry to avoid double execution
+                            break;
+                        }
+                    }
                 }
             }
             Some(pos) => {
