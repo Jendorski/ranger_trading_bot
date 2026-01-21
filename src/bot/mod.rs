@@ -31,6 +31,7 @@ use futures_util::StreamExt;
 
 //pub mod scalper;
 
+pub mod capitulation_phase;
 pub mod zones;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -168,6 +169,9 @@ pub struct Bot<'a> {
     zone_guard: ZoneGuard,
 
     macro_guard: MacroGuard,
+
+    pub capitulation_state: capitulation_phase::CapitulationState,
+    pub capitulation_strategy: capitulation_phase::CapitulationStrategy,
 }
 
 impl<'a> Bot<'a> {
@@ -203,19 +207,25 @@ impl<'a> Bot<'a> {
 
         let macro_guard = MacroGuard::new(&mut conn.clone()).await?;
 
+        let capitulation_state = capitulation_phase::CapitulationState::load_state(&mut conn)
+            .await
+            .unwrap_or_else(|_| capitulation_phase::CapitulationState::default());
+        let capitulation_strategy = capitulation_phase::CapitulationStrategy::new();
+
         Ok(Self {
+            open_pos,
             pos,
             zones,
+            loss_count,
             redis_conn: conn,
-            open_pos,
             config,
             current_margin,
             partial_profit_target,
-            loss_count,
             fees,
             zone_guard,
-            //smc,
             macro_guard,
+            capitulation_state,
+            capitulation_strategy,
         })
     }
 
@@ -1268,6 +1278,33 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
+    async fn run_capitulation_cycle(&mut self, price: f64, exchange: &dyn Exchange) -> Result<()> {
+        let dec_price = Decimal::from_f64(price).unwrap();
+
+        // --- Capitulation Phase Strategy ---
+        if let Err(e) = self
+            .capitulation_strategy
+            .run_cycle(
+                &mut self.capitulation_state,
+                dec_price,
+                exchange,
+                &mut self.redis_conn,
+            )
+            .await
+        {
+            log::error!("Capitulation strategy error: {}", e);
+        }
+
+        // Persist Capitulation State
+        let _ = capitulation_phase::CapitulationState::store_state(
+            self.redis_conn.clone(),
+            self.capitulation_state.clone(),
+        )
+        .await;
+
+        Ok(())
+    }
+
     pub async fn start_live_trading(&mut self, exchange: &dyn Exchange) -> Result<()> {
         let mut backoff_secs = 1;
         let max_backoff = 64;
@@ -1293,6 +1330,15 @@ impl<'a> Bot<'a> {
 
                                 if price > 0.0 {
                                     info!("Ticker Price = {:.2}", price);
+
+                                    // Run Capitulation Strategy Independently
+                                    if let Err(e) =
+                                        self.run_capitulation_cycle(price, exchange).await
+                                    {
+                                        log::error!("Error during capitulation cycle: {}", e);
+                                    }
+
+                                    // Run Main Ranger Strategy
                                     if let Err(e) = self.run_cycle(price, exchange).await {
                                         log::error!("Error during trading cycle: {}", e);
                                     }

@@ -45,6 +45,8 @@ pub const TRADING_BOT_RECOMMENDED_CALL: &str = "trading_bot:recommended_call";
 pub const WEEKLY_CANDLES: &'static str = "weekly_candles";
 pub const WEEKLY_ICHIMOKU: &'static str = "weekly_ichimoku";
 pub const LAST_25_WEEKLY_ICHIMOKU_SPANS: &'static str = "last_25_weekly_ichimoku_spans";
+pub const CAPITULATION_PHASE_CLOSED_POSITIONS: &str = "capitulation_phase_closed_positions";
+pub const CAPITULATION_PHASE_STATE: &str = "capitulation_phase_state";
 
 pub struct Helper {
     pub config: Config,
