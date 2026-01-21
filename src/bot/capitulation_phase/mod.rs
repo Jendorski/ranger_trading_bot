@@ -232,7 +232,7 @@ impl CapitulationStrategy {
                     state.current_capital += pnl;
                     state.active_position = None;
                     state.partial_profit_targets.clear();
-                    state.cooldown_until = Some(Utc::now() + chrono::Duration::minutes(60));
+                    state.cooldown_until = Some(Utc::now() + chrono::Duration::minutes(240));
                     warn!("Cooldown active until {:?}", state.cooldown_until);
                     CapitulationState::store_state(redis_conn.clone(), state.clone()).await?;
                 } else if price <= tp {
