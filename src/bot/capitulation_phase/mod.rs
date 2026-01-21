@@ -169,7 +169,7 @@ impl CapitulationStrategy {
 
                 for phase in all_phases {
                     if let Some((entry, sl, tp)) = self.get_trade_params(phase) {
-                        if price <= entry && price > (entry - dec!(77.0)) {
+                        if price <= entry && price > (entry - (price * dec!(0.00075))) {
                             // Small buffer for execution
                             state.current_phase = phase; // Set the detected phase
                             info!(
@@ -262,7 +262,7 @@ impl CapitulationStrategy {
                     state.current_capital += pnl;
                     state.active_position = None;
                     state.partial_profit_targets.clear();
-                    state.cooldown_until = Some(Utc::now() + chrono::Duration::minutes(240));
+                    state.cooldown_until = Some(Utc::now() + chrono::Duration::minutes(60));
                     warn!("Cooldown active until {:?}", state.cooldown_until);
                     CapitulationState::store_state(redis_conn.clone(), state.clone()).await?;
                 } else if price <= tp {
