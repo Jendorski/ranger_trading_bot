@@ -68,7 +68,7 @@ impl Default for CapitulationState {
     fn default() -> Self {
         Self {
             current_phase: CapitulationPhase::Trade1,
-            current_capital: dec!(100.0), // Start with $100 USDT
+            current_capital: dec!(200.0), // Start with $200 USDT
             active_position: None,
             partial_profit_targets: Vec::new(),
             cooldown_until: None,
@@ -93,21 +93,21 @@ impl CapitulationStrategy {
         phase: CapitulationPhase,
     ) -> Option<(Decimal, Decimal, Decimal)> {
         match phase {
-            CapitulationPhase::Trade1 => Some((dec!(92435.0), dec!(92930.0), dec!(91535.0))),
-            CapitulationPhase::Trade2 => Some((dec!(91435.0), dec!(91930.0), dec!(90535.0))),
-            CapitulationPhase::Trade3 => Some((dec!(90435.0), dec!(90930.0), dec!(89535.0))),
-            CapitulationPhase::Trade4 => Some((dec!(89435.0), dec!(90130.0), dec!(88535.0))),
+            CapitulationPhase::Trade1 => Some((dec!(92405.0), dec!(93130.0), dec!(91535.0))),
+            CapitulationPhase::Trade2 => Some((dec!(91405.0), dec!(92130.0), dec!(90535.0))),
+            CapitulationPhase::Trade3 => Some((dec!(90405.0), dec!(91130.0), dec!(89535.0))),
+            CapitulationPhase::Trade4 => Some((dec!(89405.0), dec!(90130.0), dec!(88535.0))),
             CapitulationPhase::Trade5 => Some((dec!(88405.0), dec!(89130.0), dec!(87405.0))),
-            CapitulationPhase::Trade6 => Some((dec!(87405.0), dec!(88030.0), dec!(86405.0))),
-            CapitulationPhase::Trade7 => Some((dec!(86435.0), dec!(87130.0), dec!(85405.0))),
-            CapitulationPhase::Trade8 => Some((dec!(85435.0), dec!(86130.0), dec!(84405.0))),
-            CapitulationPhase::Trade9 => Some((dec!(84535.0), dec!(85130.0), dec!(83405.0))),
-            CapitulationPhase::Trade10 => Some((dec!(83435.0), dec!(84130.0), dec!(82405.0))),
-            CapitulationPhase::Trade11 => Some((dec!(82435.0), dec!(83130.0), dec!(81405.0))),
-            CapitulationPhase::Trade12 => Some((dec!(81405.0), dec!(82030.0), dec!(80405.0))),
-            CapitulationPhase::Trade13 => Some((dec!(80435.0), dec!(81130.0), dec!(79405.0))),
-            CapitulationPhase::Trade14 => Some((dec!(79435.0), dec!(79930.0), dec!(78405.0))),
-            CapitulationPhase::Trade15 => Some((dec!(78435.0), dec!(79135.0), dec!(77405.0))),
+            CapitulationPhase::Trade6 => Some((dec!(87405.0), dec!(88130.0), dec!(86405.0))),
+            CapitulationPhase::Trade7 => Some((dec!(86405.0), dec!(87130.0), dec!(85405.0))),
+            CapitulationPhase::Trade8 => Some((dec!(85405.0), dec!(86130.0), dec!(84405.0))),
+            CapitulationPhase::Trade9 => Some((dec!(84405.0), dec!(85130.0), dec!(83405.0))),
+            CapitulationPhase::Trade10 => Some((dec!(83405.0), dec!(84130.0), dec!(82405.0))),
+            CapitulationPhase::Trade11 => Some((dec!(82405.0), dec!(83130.0), dec!(81405.0))),
+            CapitulationPhase::Trade12 => Some((dec!(81405.0), dec!(82130.0), dec!(80405.0))),
+            CapitulationPhase::Trade13 => Some((dec!(80405.0), dec!(81130.0), dec!(79405.0))),
+            CapitulationPhase::Trade14 => Some((dec!(79405.0), dec!(80130.0), dec!(78405.0))),
+            CapitulationPhase::Trade15 => Some((dec!(78405.0), dec!(79135.0), dec!(77405.0))),
             CapitulationPhase::Complete => None,
         }
     }
