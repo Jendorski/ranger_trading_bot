@@ -194,7 +194,7 @@ impl CapitulationStrategy {
                                 price,
                                 state.current_capital,
                                 self.leverage,
-                                dec!(250.00), // Using 1000 as default diff for building targets
+                                dec!(500.00), // Using 2000 as default diff for building targets
                                 Position::Short,
                             );
                             info!(
