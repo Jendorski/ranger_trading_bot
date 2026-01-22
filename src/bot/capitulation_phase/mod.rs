@@ -262,6 +262,42 @@ impl CapitulationStrategy {
                     state.current_capital += pnl;
                     state.active_position = None;
                     state.partial_profit_targets.clear();
+                    state.cooldown_until = None; //Some(Utc::now() + chrono::Duration::minutes(60));
+                    CapitulationState::store_state(redis_conn.clone(), state.clone()).await?;
+                } else if price >= actual_sl && state.partial_profit_targets.len() == 4 {
+                    warn!(
+                        "Capitulation Phase {:?}: STOP LOSS HIT (no partial profits taken) at {} (SL: {})",
+                        state.current_phase, price, actual_sl
+                    );
+                    exchange.modify_market_order(pos.clone()).await?;
+
+                    // Store history
+                    let pnl = (pos.entry_price - price) * pos.quantity.unwrap();
+                    let closed = ClosedPosition {
+                        id: pos.id,
+                        position: Some(Position::Short),
+                        side: Some(Position::Short),
+                        entry_price: pos.entry_price,
+                        entry_time: pos.entry_time,
+                        exit_price: price,
+                        exit_time: Utc::now(),
+                        pnl,
+                        quantity: pos.quantity,
+                        sl: pos.sl,
+                        roi: Some((pnl / state.current_capital) * dec!(100.0)),
+                        leverage: pos.leverage,
+                        margin: pos.margin,
+                        order_id: pos.order_id.clone(),
+                        pnl_after_fees: None,
+                        exit_fee: None,
+                    };
+                    let _: () = redis_conn
+                        .rpush(CAPITULATION_PHASE_CLOSED_POSITIONS, closed.as_str())
+                        .await?;
+
+                    state.current_capital += pnl;
+                    state.active_position = None;
+                    state.partial_profit_targets.clear();
                     state.cooldown_until = Some(Utc::now() + chrono::Duration::minutes(240));
                     warn!("Cooldown active until {:?}", state.cooldown_until);
                     CapitulationState::store_state(redis_conn.clone(), state.clone()).await?;
