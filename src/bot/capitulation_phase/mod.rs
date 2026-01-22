@@ -356,65 +356,73 @@ impl CapitulationStrategy {
                     };
                     CapitulationState::store_state(redis_conn.clone(), state.clone()).await?;
                 } else {
-                    // Check Partial Profits
-                    let mut hit_idx = None;
-                    for (i, target) in state.partial_profit_targets.iter().enumerate() {
-                        if price <= target.target_price {
-                            hit_idx = Some(i);
-                            break;
-                        }
-                    }
-
-                    if let Some(idx) = hit_idx {
-                        let target = state.partial_profit_targets.remove(idx);
-                        info!("Capitulation Partial Profit Hit: {}", target);
-
-                        let qty_to_close = target.size_btc;
-                        let mut modified_pos = pos.clone();
-                        modified_pos.quantity = Some(qty_to_close);
-
-                        let _: PlaceOrderData = exchange.modify_market_order(modified_pos).await?;
-
-                        // Calculate realized PNL for this partial target
-                        let pnl = (pos.entry_price - target.target_price) * qty_to_close;
-                        state.current_capital += pnl;
-
-                        // Store partial closure history
-                        let closed = ClosedPosition {
-                            id: pos.id,
-                            position: Some(Position::Short),
-                            side: Some(Position::Short),
-                            entry_price: pos.entry_price,
-                            entry_time: pos.entry_time,
-                            exit_price: target.target_price,
-                            exit_time: Utc::now(),
-                            pnl,
-                            quantity: Some(qty_to_close),
-                            sl: pos.sl,
-                            roi: Some((pnl / state.current_capital) * dec!(100.0)),
-                            leverage: pos.leverage,
-                            margin: pos.margin,
-                            order_id: pos.order_id.clone(),
-                            pnl_after_fees: None,
-                            exit_fee: None,
-                        };
-                        let _: () = redis_conn
-                            .rpush(CAPITULATION_PHASE_CLOSED_POSITIONS, closed.as_str())
-                            .await?;
-
-                        // Update remaining quantity and size in active position
-                        if let Some(active) = &mut state.active_position {
-                            if let Some(q) = active.quantity {
-                                let new_qty = q - qty_to_close;
-                                active.quantity = Some(new_qty);
-                                active.position_size = new_qty; // Consistent with entry logic (position_size = quantity)
-                            }
-                            if let Some(sl_update) = target.sl {
-                                active.sl = Some(sl_update);
+                    if state.partial_profit_targets.len() > 0 && state.active_position.is_some() {
+                        // Check Partial Profits
+                        let mut hit_idx = None;
+                        for (i, target) in state.partial_profit_targets.iter().enumerate() {
+                            if price <= target.target_price {
+                                hit_idx = Some(i);
+                                break;
                             }
                         }
 
-                        // Persist state
+                        if let Some(idx) = hit_idx {
+                            let target = state.partial_profit_targets.remove(idx);
+                            info!("Capitulation Partial Profit Hit: {}", target);
+
+                            let qty_to_close = target.size_btc;
+                            let mut modified_pos = pos.clone();
+                            modified_pos.quantity = Some(qty_to_close);
+
+                            let _: PlaceOrderData =
+                                exchange.modify_market_order(modified_pos).await?;
+
+                            // Calculate realized PNL for this partial target
+                            let pnl = (pos.entry_price - target.target_price) * qty_to_close;
+                            state.current_capital += pnl;
+
+                            // Store partial closure history
+                            let closed = ClosedPosition {
+                                id: pos.id,
+                                position: Some(Position::Short),
+                                side: Some(Position::Short),
+                                entry_price: pos.entry_price,
+                                entry_time: pos.entry_time,
+                                exit_price: target.target_price,
+                                exit_time: Utc::now(),
+                                pnl,
+                                quantity: Some(qty_to_close),
+                                sl: pos.sl,
+                                roi: Some((pnl / state.current_capital) * dec!(100.0)),
+                                leverage: pos.leverage,
+                                margin: pos.margin,
+                                order_id: pos.order_id.clone(),
+                                pnl_after_fees: None,
+                                exit_fee: None,
+                            };
+                            let _: () = redis_conn
+                                .rpush(CAPITULATION_PHASE_CLOSED_POSITIONS, closed.as_str())
+                                .await?;
+
+                            // Update remaining quantity and size in active position
+                            if let Some(active) = &mut state.active_position {
+                                if let Some(q) = active.quantity {
+                                    let new_qty = q - qty_to_close;
+                                    active.quantity = Some(new_qty);
+                                    active.position_size = new_qty; // Consistent with entry logic (position_size = quantity)
+                                }
+                                if let Some(sl_update) = target.sl {
+                                    active.sl = Some(sl_update);
+                                }
+                            }
+
+                            // Persist state
+                            CapitulationState::store_state(redis_conn.clone(), state.clone())
+                                .await?;
+                        }
+                    } else {
+                        state.active_position = None;
+                        state.partial_profit_targets.clear();
                         CapitulationState::store_state(redis_conn.clone(), state.clone()).await?;
                     }
                 }
