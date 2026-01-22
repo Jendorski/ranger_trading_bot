@@ -7,6 +7,7 @@ use crate::cache::RedisClient;
 use crate::config::Config;
 use crate::exchange::HttpExchange;
 
+mod api;
 mod bot;
 mod cache;
 mod calendar;
@@ -59,6 +60,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         });
     }
+
+    // 4️⃣ Spawn API server
+    let api_conn = redis_conn.clone();
+    let _api_handle = tokio::spawn(async move {
+        let app = api::create_router(api_conn);
+        let listener = tokio::net::TcpListener::bind("0.0.0.0:4545")
+            .await
+            .expect("Failed to bind API server");
+
+        info!("API server listening on http://0.0.0.0:4545");
+
+        if let Err(e) = axum::serve(listener, app).await {
+            log::error!("API server error: {}", e);
+        }
+    });
 
     info!("Starting bot loop...");
 
