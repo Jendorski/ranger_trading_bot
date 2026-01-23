@@ -180,6 +180,11 @@ impl CapitulationStrategy {
                                 state.current_phase, price
                             );
 
+                            if state.current_capital <= dec!(60.0) {
+                                info!("Capitulation Phase Capital {:?}: Not enough capital to enter trade {}", state.current_phase, state.current_capital);
+                                state.current_capital = dec!(200.0);
+                            }
+
                             let quantity = Helper::contract_amount(
                                 price,
                                 state.current_capital,
