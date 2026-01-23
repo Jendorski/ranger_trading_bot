@@ -25,6 +25,11 @@ pub enum CapitulationPhase {
     Trade9,
     Trade10,
     Trade11,
+    Trade12,
+    Trade13,
+    Trade14,
+    Trade15,
+    Trade16,
     Complete,
 }
 
@@ -89,17 +94,22 @@ impl CapitulationStrategy {
         phase: CapitulationPhase,
     ) -> Option<(Decimal, Decimal, Decimal)> {
         match phase {
-            CapitulationPhase::Trade1 => Some((dec!(96405.0), dec!(97130.0), dec!(92535.0))),
-            CapitulationPhase::Trade2 => Some((dec!(94405.0), dec!(95130.0), dec!(92535.0))),
-            CapitulationPhase::Trade3 => Some((dec!(92405.0), dec!(93130.0), dec!(90535.0))),
-            CapitulationPhase::Trade4 => Some((dec!(90405.0), dec!(91130.0), dec!(88435.0))),
-            CapitulationPhase::Trade5 => Some((dec!(88405.0), dec!(89130.0), dec!(86405.0))),
-            CapitulationPhase::Trade6 => Some((dec!(86405.0), dec!(87130.0), dec!(84405.0))),
-            CapitulationPhase::Trade7 => Some((dec!(84405.0), dec!(85130.0), dec!(82405.0))),
-            CapitulationPhase::Trade8 => Some((dec!(82405.0), dec!(83130.0), dec!(80405.0))),
-            CapitulationPhase::Trade9 => Some((dec!(80405.0), dec!(81130.0), dec!(78405.0))),
-            CapitulationPhase::Trade10 => Some((dec!(78405.0), dec!(79130.0), dec!(76405.0))),
-            CapitulationPhase::Trade11 => Some((dec!(76405.0), dec!(77130.0), dec!(74405.0))),
+            CapitulationPhase::Trade1 => Some((dec!(108405.0), dec!(109130.0), dec!(107535.0))),
+            CapitulationPhase::Trade2 => Some((dec!(107405.0), dec!(108130.0), dec!(104535.0))),
+            CapitulationPhase::Trade3 => Some((dec!(104405.0), dec!(105130.0), dec!(100535.0))),
+            CapitulationPhase::Trade4 => Some((dec!(100405.0), dec!(101130.0), dec!(98535.0))),
+            CapitulationPhase::Trade5 => Some((dec!(98405.0), dec!(99130.0), dec!(96535.0))),
+            CapitulationPhase::Trade6 => Some((dec!(96405.0), dec!(97130.0), dec!(92535.0))),
+            CapitulationPhase::Trade7 => Some((dec!(94405.0), dec!(95130.0), dec!(92535.0))),
+            CapitulationPhase::Trade8 => Some((dec!(92405.0), dec!(93130.0), dec!(90535.0))),
+            CapitulationPhase::Trade9 => Some((dec!(90405.0), dec!(91130.0), dec!(88435.0))),
+            CapitulationPhase::Trade10 => Some((dec!(88405.0), dec!(89130.0), dec!(86405.0))),
+            CapitulationPhase::Trade11 => Some((dec!(86405.0), dec!(87130.0), dec!(84405.0))),
+            CapitulationPhase::Trade12 => Some((dec!(84405.0), dec!(85130.0), dec!(82405.0))),
+            CapitulationPhase::Trade13 => Some((dec!(82405.0), dec!(83130.0), dec!(80405.0))),
+            CapitulationPhase::Trade14 => Some((dec!(80405.0), dec!(81130.0), dec!(78405.0))),
+            CapitulationPhase::Trade15 => Some((dec!(78405.0), dec!(79130.0), dec!(76405.0))),
+            CapitulationPhase::Trade16 => Some((dec!(76405.0), dec!(77130.0), dec!(74405.0))),
             CapitulationPhase::Complete => None,
         }
     }
@@ -152,6 +162,12 @@ impl CapitulationStrategy {
                     CapitulationPhase::Trade8,
                     CapitulationPhase::Trade9,
                     CapitulationPhase::Trade10,
+                    CapitulationPhase::Trade11,
+                    CapitulationPhase::Trade12,
+                    CapitulationPhase::Trade13,
+                    CapitulationPhase::Trade14,
+                    CapitulationPhase::Trade15,
+                    CapitulationPhase::Trade16,
                 ];
 
                 for phase in all_phases {
@@ -216,78 +232,80 @@ impl CapitulationStrategy {
                 //let actual_tp = pos.tp.unwrap_or(tp);
 
                 if price >= actual_sl {
-                    warn!(
-                        "Capitulation Phase {:?}: STOP LOSS HIT at {} (SL: {})",
-                        state.current_phase, price, actual_sl
-                    );
-                    exchange.modify_market_order(pos.clone()).await?; // Assuming this closes it
-
-                    // Store history
-                    let pnl = (pos.entry_price - price) * pos.quantity.unwrap();
-                    let closed = ClosedPosition {
-                        id: pos.id,
-                        position: Some(Position::Short),
-                        side: Some(Position::Short),
-                        entry_price: pos.entry_price,
-                        entry_time: pos.entry_time,
-                        exit_price: price,
-                        exit_time: Utc::now(),
-                        pnl,
-                        quantity: pos.quantity,
-                        sl: pos.sl,
-                        roi: Some((pnl / state.current_capital) * dec!(100.0)),
-                        leverage: pos.leverage,
-                        margin: pos.margin,
-                        order_id: pos.order_id.clone(),
-                        pnl_after_fees: None,
-                        exit_fee: None,
-                    };
-                    let _: () = redis_conn
-                        .rpush(CAPITULATION_PHASE_CLOSED_POSITIONS, closed.as_str())
-                        .await?;
-
-                    state.current_capital += pnl;
-                    state.active_position = None;
-                    state.partial_profit_targets.clear();
-                    state.cooldown_until = None; //Some(Utc::now() + chrono::Duration::minutes(60));
-                    CapitulationState::store_state(redis_conn.clone(), state.clone()).await?;
-                } else if price >= actual_sl && state.partial_profit_targets.len() == 4 {
-                    warn!(
+                    if price >= actual_sl && state.partial_profit_targets.len() == 4 {
+                        warn!(
                         "Capitulation Phase {:?}: STOP LOSS HIT (no partial profits taken) at {} (SL: {})",
                         state.current_phase, price, actual_sl
                     );
-                    exchange.modify_market_order(pos.clone()).await?;
+                        exchange.modify_market_order(pos.clone()).await?;
 
-                    // Store history
-                    let pnl = (pos.entry_price - price) * pos.quantity.unwrap();
-                    let closed = ClosedPosition {
-                        id: pos.id,
-                        position: Some(Position::Short),
-                        side: Some(Position::Short),
-                        entry_price: pos.entry_price,
-                        entry_time: pos.entry_time,
-                        exit_price: price,
-                        exit_time: Utc::now(),
-                        pnl,
-                        quantity: pos.quantity,
-                        sl: pos.sl,
-                        roi: Some((pnl / state.current_capital) * dec!(100.0)),
-                        leverage: pos.leverage,
-                        margin: pos.margin,
-                        order_id: pos.order_id.clone(),
-                        pnl_after_fees: None,
-                        exit_fee: None,
-                    };
-                    let _: () = redis_conn
-                        .rpush(CAPITULATION_PHASE_CLOSED_POSITIONS, closed.as_str())
-                        .await?;
+                        // Store history
+                        let pnl = (pos.entry_price - price) * pos.quantity.unwrap();
+                        let closed = ClosedPosition {
+                            id: pos.id,
+                            position: Some(Position::Short),
+                            side: Some(Position::Short),
+                            entry_price: pos.entry_price,
+                            entry_time: pos.entry_time,
+                            exit_price: price,
+                            exit_time: Utc::now(),
+                            pnl,
+                            quantity: pos.quantity,
+                            sl: pos.sl,
+                            roi: Some((pnl / state.current_capital) * dec!(100.0)),
+                            leverage: pos.leverage,
+                            margin: pos.margin,
+                            order_id: pos.order_id.clone(),
+                            pnl_after_fees: None,
+                            exit_fee: None,
+                        };
+                        let _: () = redis_conn
+                            .rpush(CAPITULATION_PHASE_CLOSED_POSITIONS, closed.as_str())
+                            .await?;
 
-                    state.current_capital += pnl;
-                    state.active_position = None;
-                    state.partial_profit_targets.clear();
-                    state.cooldown_until = Some(Utc::now() + chrono::Duration::minutes(240));
-                    warn!("Cooldown active until {:?}", state.cooldown_until);
-                    CapitulationState::store_state(redis_conn.clone(), state.clone()).await?;
+                        state.current_capital += pnl;
+                        state.active_position = None;
+                        state.partial_profit_targets.clear();
+                        state.cooldown_until = Some(Utc::now() + chrono::Duration::minutes(240));
+                        warn!("Cooldown active until {:?}", state.cooldown_until);
+                        CapitulationState::store_state(redis_conn.clone(), state.clone()).await?;
+                    } else {
+                        warn!(
+                            "Capitulation Phase {:?}: PARTIAL PROFIT STOP LOSS HIT at {} (SL: {})",
+                            state.current_phase, price, actual_sl
+                        );
+                        exchange.modify_market_order(pos.clone()).await?; // Assuming this closes it
+
+                        // Store history
+                        let pnl = (pos.entry_price - price) * pos.quantity.unwrap();
+                        let closed = ClosedPosition {
+                            id: pos.id,
+                            position: Some(Position::Short),
+                            side: Some(Position::Short),
+                            entry_price: pos.entry_price,
+                            entry_time: pos.entry_time,
+                            exit_price: price,
+                            exit_time: Utc::now(),
+                            pnl,
+                            quantity: pos.quantity,
+                            sl: pos.sl,
+                            roi: Some((pnl / state.current_capital) * dec!(100.0)),
+                            leverage: pos.leverage,
+                            margin: pos.margin,
+                            order_id: pos.order_id.clone(),
+                            pnl_after_fees: None,
+                            exit_fee: None,
+                        };
+                        let _: () = redis_conn
+                            .rpush(CAPITULATION_PHASE_CLOSED_POSITIONS, closed.as_str())
+                            .await?;
+
+                        state.current_capital += pnl;
+                        state.active_position = None;
+                        state.partial_profit_targets.clear();
+                        state.cooldown_until = None; //Some(Utc::now() + chrono::Duration::minutes(60));
+                        CapitulationState::store_state(redis_conn.clone(), state.clone()).await?;
+                    }
                 } else if price <= tp {
                     info!(
                         "Capitulation Phase {:?}: TAKE PROFIT HIT at {} (TP: {})",
@@ -339,6 +357,11 @@ impl CapitulationStrategy {
                         CapitulationPhase::Trade8 => CapitulationPhase::Trade9,
                         CapitulationPhase::Trade9 => CapitulationPhase::Trade10,
                         CapitulationPhase::Trade10 => CapitulationPhase::Trade11,
+                        CapitulationPhase::Trade11 => CapitulationPhase::Trade12,
+                        CapitulationPhase::Trade12 => CapitulationPhase::Trade13,
+                        CapitulationPhase::Trade13 => CapitulationPhase::Trade14,
+                        CapitulationPhase::Trade14 => CapitulationPhase::Trade15,
+                        CapitulationPhase::Trade15 => CapitulationPhase::Trade16,
                         _ => CapitulationPhase::Complete,
                     };
                     CapitulationState::store_state(redis_conn.clone(), state.clone()).await?;
