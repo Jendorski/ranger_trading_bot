@@ -1081,6 +1081,8 @@ impl<'a> Bot<'a> {
 
         if self.loss_count >= 2 {
             warn!("Loss count reached 2, skipping cycle");
+            self.loss_count = Self::load_loss_count(&mut self.redis_conn).await?;
+            info!("loaded loss count: {}", self.loss_count);
             return Ok(());
         }
 
