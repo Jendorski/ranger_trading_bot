@@ -1340,10 +1340,10 @@ impl<'a> Bot<'a> {
                                         log::error!("Error during capitulation cycle: {}", e);
                                     }
 
-                                    // Run Main Ranger Strategy
-                                    if let Err(e) = self.run_cycle(price, exchange).await {
-                                        log::error!("Error during trading cycle: {}", e);
-                                    }
+                                    // Run Main Ranger Strategy; Comment out for now.
+                                    // if let Err(e) = self.run_cycle(price, exchange).await {
+                                    //     log::error!("Error during trading cycle: {}", e);
+                                    // }
                                 }
 
                                 // Periodic cumulative stats check (midnight)
