@@ -76,11 +76,41 @@ impl CapitulationState {
 
     pub async fn store_state(
         mut conn: redis::aio::MultiplexedConnection,
-        state: CapitulationState,
+        state: &CapitulationState,
     ) -> Result<()> {
         let key = CAPITULATION_PHASE_STATE;
         let _: () = conn.set(key, state.as_str()).await?;
         Ok(())
+    }
+
+    pub async fn update_capital(
+        mut self,
+        mut conn: redis::aio::MultiplexedConnection,
+        new_capital: Decimal,
+    ) -> Result<CapitulationState> {
+        let key = CAPITULATION_PHASE_STATE;
+
+        let mut current_state = Self::load_state(&mut conn).await.unwrap();
+        info!(
+            "Updating capitulation capital from {} to {}",
+            current_state.current_capital, new_capital
+        );
+
+        current_state.current_capital = new_capital;
+
+        let resp: () = conn.set(key, current_state.as_str()).await?;
+        info!("update_capital~~resp: {:?}", resp);
+
+        let get: String = conn.get(key).await?;
+        info!("update_capital~~get: {:?}", get);
+
+        let refetch = Self::load_state(&mut conn).await.unwrap();
+        info!("update_capital~~refetch: {:?}", refetch);
+
+        self.current_capital = new_capital;
+        info!("self: {:?}", self);
+
+        Ok(self)
     }
 }
 
@@ -279,8 +309,7 @@ impl CapitulationStrategy {
                                 "Built {:?} partial profit targets",
                                 state.partial_profit_targets
                             );
-                            CapitulationState::store_state(redis_conn.clone(), state.clone())
-                                .await?;
+                            CapitulationState::store_state(redis_conn.clone(), state).await?;
 
                             // Break after finding the first valid entry to avoid double execution
                             break;
@@ -330,7 +359,7 @@ impl CapitulationStrategy {
                         state.partial_profit_targets.clear();
                         state.cooldown_until = Some(Utc::now() + chrono::Duration::minutes(240));
                         warn!("Cooldown active until {:?}", state.cooldown_until);
-                        CapitulationState::store_state(redis_conn.clone(), state.clone()).await?;
+                        CapitulationState::store_state(redis_conn.clone(), state).await?;
                     } else {
                         warn!(
                             "Capitulation Phase {:?}: PARTIAL PROFIT STOP LOSS HIT at {} (SL: {})",
@@ -366,7 +395,7 @@ impl CapitulationStrategy {
                         state.active_position = None;
                         state.partial_profit_targets.clear();
                         state.cooldown_until = None; //Some(Utc::now() + chrono::Duration::minutes(60));
-                        CapitulationState::store_state(redis_conn.clone(), state.clone()).await?;
+                        CapitulationState::store_state(redis_conn.clone(), state).await?;
                     }
                 } else if price <= tp {
                     info!(
@@ -426,7 +455,7 @@ impl CapitulationStrategy {
                         CapitulationPhase::Trade15 => CapitulationPhase::Trade16,
                         _ => CapitulationPhase::Complete,
                     };
-                    CapitulationState::store_state(redis_conn.clone(), state.clone()).await?;
+                    CapitulationState::store_state(redis_conn.clone(), state).await?;
                 } else {
                     if state.partial_profit_targets.len() > 0 && state.active_position.is_some() {
                         // Check Partial Profits
@@ -489,13 +518,12 @@ impl CapitulationStrategy {
                             }
 
                             // Persist state
-                            CapitulationState::store_state(redis_conn.clone(), state.clone())
-                                .await?;
+                            CapitulationState::store_state(redis_conn.clone(), state).await?;
                         }
                     } else {
                         state.active_position = None;
                         state.partial_profit_targets.clear();
-                        CapitulationState::store_state(redis_conn.clone(), state.clone()).await?;
+                        CapitulationState::store_state(redis_conn.clone(), state).await?;
                     }
                 }
             }

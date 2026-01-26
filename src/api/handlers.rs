@@ -5,15 +5,17 @@ use axum::{
     Json,
 };
 use chrono::{DateTime, Utc};
+use log::info;
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 
 use super::ApiState;
-use crate::bot::capitulation_phase::CapitulationState;
+use crate::bot::capitulation_phase::{self, CapitulationState};
 use crate::bot::{ClosedPosition, OpenPosition};
 use crate::helper::{
     PartialProfitTarget, CAPITULATION_PHASE_CLOSED_POSITIONS, CAPITULATION_PHASE_STATE,
-    TRADING_BOT_ACTIVE, TRADING_BOT_CLOSE_POSITIONS, TRADING_CAPITAL, TRADING_PARTIAL_PROFIT_TARGET,
+    TRADING_BOT_ACTIVE, TRADING_BOT_CLOSE_POSITIONS, TRADING_CAPITAL,
+    TRADING_PARTIAL_PROFIT_TARGET,
 };
 
 /// Pagination query parameters
@@ -327,6 +329,36 @@ pub async fn get_capitulation_state(
     }
 }
 
+/// Request to update capitulation capital
+#[derive(Debug, Deserialize)]
+pub struct UpdateCapitalRequest {
+    pub capital: rust_decimal::Decimal,
+}
+
+/// POST /api/capitulation/capital
+/// Updates the current capitulation capital
+pub async fn update_capitulation_capital(
+    State(state): State<ApiState>,
+    Json(payload): Json<UpdateCapitalRequest>,
+) -> Result<Json<CapitulationState>, ApiError> {
+    let mut conn = state.redis_conn.lock().await;
+
+    let old_state = capitulation_phase::CapitulationState::load_state(&mut conn)
+        .await
+        .unwrap();
+    info!("Old state: {:?}", old_state);
+
+    let cap_state = capitulation_phase::CapitulationState::update_capital(
+        old_state,
+        conn.clone(),
+        payload.capital,
+    )
+    .await
+    .map_err(|e| ApiError::RedisError(format!("Failed to update capital: {}", e)))?;
+
+    Ok(Json(cap_state))
+}
+
 /// Response for trading capital
 #[derive(Debug, Serialize)]
 pub struct TradingCapitalResponse {
@@ -348,9 +380,7 @@ pub async fn get_trading_capital(
 
     match raw_capital {
         Some(capital) => Ok(Json(TradingCapitalResponse { capital })),
-        None => Err(ApiError::NotFound(
-            "Trading capital not found".to_string(),
-        )),
+        None => Err(ApiError::NotFound("Trading capital not found".to_string())),
     }
 }
 
@@ -386,7 +416,7 @@ pub async fn get_weekly_roi(
     State(state): State<ApiState>,
 ) -> Result<Json<WeeklyRoiResponse>, ApiError> {
     use crate::graph::Graph;
-    
+
     let mut conn = state.redis_conn.lock().await;
 
     // Load all closed positions
@@ -419,7 +449,7 @@ pub async fn get_monthly_roi(
     State(state): State<ApiState>,
 ) -> Result<Json<MonthlyRoiResponse>, ApiError> {
     use crate::graph::Graph;
-    
+
     let mut conn = state.redis_conn.lock().await;
 
     // Load all closed positions

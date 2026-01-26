@@ -1297,13 +1297,6 @@ impl<'a> Bot<'a> {
             log::error!("Capitulation strategy error: {}", e);
         }
 
-        // Persist Capitulation State
-        let _ = capitulation_phase::CapitulationState::store_state(
-            self.redis_conn.clone(),
-            self.capitulation_state.clone(),
-        )
-        .await;
-
         Ok(())
     }
 
