@@ -351,7 +351,7 @@ impl CapitulationStrategy {
                             exit_fee: None,
                         };
                         let _: () = redis_conn
-                            .rpush(CAPITULATION_PHASE_CLOSED_POSITIONS, closed.as_str())
+                            .lpush(CAPITULATION_PHASE_CLOSED_POSITIONS, closed.as_str())
                             .await?;
 
                         state.current_capital += pnl;
@@ -388,7 +388,7 @@ impl CapitulationStrategy {
                             exit_fee: None,
                         };
                         let _: () = redis_conn
-                            .rpush(CAPITULATION_PHASE_CLOSED_POSITIONS, closed.as_str())
+                            .lpush(CAPITULATION_PHASE_CLOSED_POSITIONS, closed.as_str())
                             .await?;
 
                         state.current_capital += pnl;
@@ -430,7 +430,7 @@ impl CapitulationStrategy {
                         exit_fee: None,
                     };
                     let _: () = redis_conn
-                        .rpush(CAPITULATION_PHASE_CLOSED_POSITIONS, closed.as_str())
+                        .lpush(CAPITULATION_PHASE_CLOSED_POSITIONS, closed.as_str())
                         .await?;
 
                     info!("New compounded capital: {}", state.current_capital);
@@ -502,7 +502,7 @@ impl CapitulationStrategy {
                                 exit_fee: None,
                             };
                             let _: () = redis_conn
-                                .rpush(CAPITULATION_PHASE_CLOSED_POSITIONS, closed.as_str())
+                                .lpush(CAPITULATION_PHASE_CLOSED_POSITIONS, closed.as_str())
                                 .await?;
 
                             // Update remaining quantity and size in active position

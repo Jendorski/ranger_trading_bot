@@ -9,8 +9,8 @@ use crate::{
     config::Config,
     exchange::{Exchange, OrderSide},
     helper::{
-        Helper, SCALPER_CLOSED_POSITIONS, TRADIN_SCALPER_BOT_POSITION, TRADING_BOT_CLOSE_POSITIONS,
-        TRADING_SCALPER_BOT_ACTIVE,
+        Helper, SCALPER_CLOSED_POSITIONS, TRADING_BOT_CLOSE_POSITIONS, TRADING_SCALPER_BOT_ACTIVE,
+        TRADIN_SCALPER_BOT_POSITION,
     },
 };
 
@@ -98,7 +98,7 @@ impl ScalperBot {
         let _: () = conn.lpush(key, json.clone()).await?;
 
         // RPUSH pushes to the **right** of the list - oldest element first
-        let _: () = conn.rpush(scalper_key, json.clone()).await?;
+        let _: () = conn.lpush(scalper_key, json.clone()).await?;
 
         // OPTIONAL: keep only the last N trades (e.g. 10 000)
         // conn.ltrim(key, 0, 9999).await?;
