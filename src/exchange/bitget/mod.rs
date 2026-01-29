@@ -236,14 +236,8 @@ impl FuturesCall for HttpCandleData {
         let passphrase = &self.config.passphrase;
 
         let base_url = "https://api.bitget.com";
-        let path = "/api/v2/mix/order/modify-order";
+        let path = "/api/v2/mix/order/place-order";
         let method = "POST";
-
-        let f64_tp = Helper::decimal_to_f64(open_position.tp.unwrap_or(dec!(0.00)));
-        let f64_sl = Helper::decimal_to_f64(open_position.sl.unwrap_or(dec!(0.00)));
-
-        let preset_stop_surplus_price = Helper::truncate_to_1_dp(f64_tp);
-        let preset_stop_loss_price = Helper::truncate_to_1_dp(f64_sl);
 
         let size = open_position.position_size.to_string();
 
@@ -251,20 +245,21 @@ impl FuturesCall for HttpCandleData {
 
         let client_order_id = open_position.id.to_string();
 
-        let mut side: &str = "buy";
+        let mut side: &str = "sell";
 
         if open_position.pos == Position::Long {
-            side = "buy";
+            side = "sell";
         }
 
         if open_position.pos == Position::Short {
-            side = "sell";
+            side = "buy";
         }
 
         let body_json = json!({
             "symbol": "BTCUSDT",
             "side": side,
             "orderType": "market",
+            "tradeSide": "close",
             "size": size,
             "price": price,
             "marginMode": "isolated",
@@ -272,9 +267,7 @@ impl FuturesCall for HttpCandleData {
             "productType": "USDT-FUTURES",
             "marginCoin": "USDT",
             "force": "gtc",
-            "clientOid": client_order_id,
-            "presetStopSurplusPrice": preset_stop_surplus_price,
-            "presetStopLossPrice": preset_stop_loss_price
+            "clientOid": client_order_id
         });
 
         let body = body_json.to_string();
