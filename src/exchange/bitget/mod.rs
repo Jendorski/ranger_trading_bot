@@ -8,6 +8,7 @@ use rust_decimal_macros::dec;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use uuid::Uuid;
 
 use crate::{
     bot::{OpenPosition, Position},
@@ -243,7 +244,7 @@ impl FuturesCall for HttpCandleData {
 
         let price = open_position.entry_price.to_string();
 
-        let client_order_id = open_position.id.to_string();
+        let client_order_id = Uuid::new_v4().to_string();
 
         let mut side: &str = "sell";
 
