@@ -259,14 +259,12 @@ impl FuturesCall for HttpCandleData {
             "symbol": "BTCUSDT",
             "side": side,
             "orderType": "market",
-            "tradeSide": "close",
             "size": size,
             "price": price,
             "marginMode": "isolated",
-            "timeInForce": "goodTillCancel",
             "productType": "USDT-FUTURES",
             "marginCoin": "USDT",
-            "force": "gtc",
+            "reduceOnly": "YES",
             "clientOid": client_order_id
         });
 
