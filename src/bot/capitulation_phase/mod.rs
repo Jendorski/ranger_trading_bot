@@ -219,43 +219,7 @@ impl CapitulationStrategy {
         match &state.active_position {
             None => {
                 // Look for entry in ANY phase
-                let all_phases = [
-                    // CapitulationPhase::Trade1,
-                    // CapitulationPhase::Trade2,
-                    // CapitulationPhase::Trade3,
-                    // CapitulationPhase::Trade4,
-                    // CapitulationPhase::Trade5,
-                    // CapitulationPhase::Trade6,
-                    // CapitulationPhase::Trade7,
-                    // CapitulationPhase::Trade8,
-                    // CapitulationPhase::Trade9,
-                    CapitulationPhase::Trade10,
-                    CapitulationPhase::Trade11,
-                    CapitulationPhase::Trade12,
-                    CapitulationPhase::Trade13,
-                    CapitulationPhase::Trade14,
-                    CapitulationPhase::Trade15,
-                    CapitulationPhase::Trade16,
-                    // CapitulationPhase::Trade17,
-                    // CapitulationPhase::Trade18,
-                    // CapitulationPhase::Trade19,
-                    // CapitulationPhase::Trade20,
-                    // CapitulationPhase::Trade21,
-                    // CapitulationPhase::Trade22,
-                    // CapitulationPhase::Trade23,
-                    // CapitulationPhase::Trade24,
-                    // CapitulationPhase::Trade25,
-                    // CapitulationPhase::Trade26,
-                    // CapitulationPhase::Trade27,
-                    // CapitulationPhase::Trade28,
-                    // CapitulationPhase::Trade29,
-                    // CapitulationPhase::Trade30,
-                    // CapitulationPhase::Trade31,
-                    // CapitulationPhase::Trade32,
-                    // CapitulationPhase::Trade33,
-                    // CapitulationPhase::Trade34,
-                    // CapitulationPhase::Trade35,
-                ];
+                let all_phases = [CapitulationPhase::Trade11, CapitulationPhase::Trade16];
 
                 for phase in all_phases {
                     if let Some((entry, sl, tp)) = self.get_trade_params(phase) {
