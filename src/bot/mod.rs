@@ -884,7 +884,7 @@ impl<'a> Bot<'a> {
                 .collect();
 
             if valid_zones.is_empty() {
-                return 0.00;
+                return self.config.ranger_price_difference;
             }
 
             // Find the nearest zone by comparing distance to zone high

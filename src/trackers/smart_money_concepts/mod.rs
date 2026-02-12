@@ -756,18 +756,13 @@ async fn smc_main(conn: &mut redis::aio::MultiplexedConnection, timeframe: Strin
     let long_zones = filter_close_zones(filtered_lows, 1500.0);
     let short_zones = filter_close_zones(filtered_highs, 1500.0);
 
-    if long_zones.is_empty() {
-        info!("No long zone found");
-        return;
-    }
-
-    if short_zones.is_empty() {
-        info!("No short zone found");
+    if short_zones.is_empty() || long_zones.is_empty() {
+        info!("No zones found");
         return;
     }
 
     let zones = Zones {
-        long_zones,
+        long_zones: Vec::new(),
         short_zones,
     };
 
