@@ -257,7 +257,7 @@ impl CapitulationStrategy {
                                 order_id: None,
                             };
 
-                            let exec = exchange.place_market_order(open_pos.clone()).await?;
+                            let exec = exchange.place_market_order(&open_pos).await?;
                             open_pos.order_id = Some(exec.order_id);
                             state.active_position = Some(open_pos.clone());
 
@@ -292,7 +292,7 @@ impl CapitulationStrategy {
                         "Capitulation Phase {:?}: STOP LOSS HIT (no partial profits taken) at {} (SL: {})",
                         state.current_phase, price, actual_sl
                     );
-                        exchange.modify_market_order(pos.clone()).await?;
+                        exchange.modify_market_order(pos).await?;
 
                         // Store history
                         let pnl = (pos.entry_price - price) * pos.quantity.unwrap();
@@ -329,7 +329,7 @@ impl CapitulationStrategy {
                             "Capitulation Phase {:?}: PARTIAL PROFIT STOP LOSS HIT at {} (SL: {})",
                             state.current_phase, price, actual_sl
                         );
-                        exchange.modify_market_order(pos.clone()).await?; // Assuming this closes it
+                        exchange.modify_market_order(pos).await?; // Assuming this closes it
 
                         // Store history
                         let pnl = (pos.entry_price - price) * pos.quantity.unwrap();
@@ -368,7 +368,7 @@ impl CapitulationStrategy {
                     );
 
                     // Close position
-                    exchange.modify_market_order(pos.clone()).await?;
+                    exchange.modify_market_order(pos).await?;
 
                     // Simple PNL Calculation for compounding
                     let pnl = (pos.entry_price - price) * pos.quantity.unwrap();
@@ -440,7 +440,7 @@ impl CapitulationStrategy {
                             modified_pos.quantity = Some(qty_to_close);
 
                             let _: PlaceOrderData =
-                                exchange.modify_market_order(modified_pos).await?;
+                                exchange.modify_market_order(&modified_pos).await?;
 
                             // Calculate realized PNL for this partial target
                             let pnl = (pos.entry_price - target.target_price) * qty_to_close;

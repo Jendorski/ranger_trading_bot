@@ -131,7 +131,7 @@ impl OpenPosition {
 
     async fn store_open_position(
         mut conn: redis::aio::MultiplexedConnection,
-        open_pos: OpenPosition,
+        open_pos: &OpenPosition,
     ) -> Result<()> {
         let key = TRADING_BOT_ACTIVE;
 
@@ -263,7 +263,7 @@ impl<'a> Bot<'a> {
         })
     }
 
-    async fn store_position(&mut self, pos: Position, open_pos: OpenPosition) -> Result<()> {
+    async fn store_position(&mut self, pos: Position, open_pos: &OpenPosition) -> Result<()> {
         let _: () = self
             .redis_conn
             .set(TRADING_BOT_POSITION, pos.as_str())
@@ -359,10 +359,7 @@ impl<'a> Bot<'a> {
             price,
         );
 
-        let (pnl_after_fees, exit_fee) = self
-            .fees
-            .calc_pnl_for_exit(self.open_pos.clone(), price)
-            .await;
+        let (pnl_after_fees, exit_fee) = self.fees.calc_pnl_for_exit(&self.open_pos, price).await;
         let closed_pos = ClosedPosition {
             id: self.open_pos.id,
             entry_price: self.open_pos.entry_price,
@@ -473,8 +470,7 @@ impl<'a> Bot<'a> {
         self.current_margin = current_margin;
 
         let _ = Self::store_current_margin(current_margin, &mut self.redis_conn).await;
-        let _ =
-            OpenPosition::store_open_position(self.redis_conn.clone(), self.open_pos.clone()).await;
+        let _ = OpenPosition::store_open_position(self.redis_conn.clone(), &self.open_pos).await;
 
         return current_margin;
     }
@@ -497,10 +493,7 @@ impl<'a> Bot<'a> {
             self.open_pos.position_size,
             price,
         );
-        let (pnl_after_fees, exit_fee) = self
-            .fees
-            .calc_pnl_for_exit(self.open_pos.clone(), price)
-            .await;
+        let (pnl_after_fees, exit_fee) = self.fees.calc_pnl_for_exit(&self.open_pos, price).await;
         info!(
             "close_short_position: pnl, pnl_after_fees, exit_fees -> {:?}, {:?}, {:?}",
             pnl, pnl_after_fees, exit_fee
@@ -578,8 +571,7 @@ impl<'a> Bot<'a> {
 
         self.open_pos.tp = Some(price);
 
-        let exec_price: PlaceOrderData =
-            exchange.modify_market_order(self.open_pos.clone()).await?;
+        let exec_price: PlaceOrderData = exchange.modify_market_order(&self.open_pos).await?;
 
         info!("Ranger Closed LONG at {:?}", exec_price);
 
@@ -653,14 +645,12 @@ impl<'a> Bot<'a> {
 
         let (pnl_after_fees, exit_fee) = self
             .fees
-            .calc_pnl_for_exit(modified_open_pos.clone(), dec_price)
+            .calc_pnl_for_exit(&modified_open_pos, dec_price)
             .await;
 
         //Exchange call to take profit
         //self.open_pos.tp = Some(dec_price);
-        let exec_price: PlaceOrderData = exchange
-            .modify_market_order(modified_open_pos.clone())
-            .await?;
+        let exec_price: PlaceOrderData = exchange.modify_market_order(&modified_open_pos).await?;
         info!("exec_price: {:?}", exec_price);
 
         let closed_pos = ClosedPosition {
@@ -702,7 +692,8 @@ impl<'a> Bot<'a> {
         };
 
         warn!("NEW SL for LONG is: {:?}", target.sl);
-        self.store_position(self.pos, self.open_pos.clone()).await?;
+        self.store_position(self.pos, &self.open_pos.clone())
+            .await?;
         Ok(())
     }
 
@@ -767,14 +758,12 @@ impl<'a> Bot<'a> {
 
         let (pnl_after_fees, exit_fee) = self
             .fees
-            .calc_pnl_for_exit(modified_open_pos.clone(), dec_price)
+            .calc_pnl_for_exit(&modified_open_pos, dec_price)
             .await;
 
         //Exchange call to take profit
         //self.open_pos.tp = Some(dec_price);
-        let exec_price: PlaceOrderData = exchange
-            .modify_market_order(modified_open_pos.clone())
-            .await?;
+        let exec_price: PlaceOrderData = exchange.modify_market_order(&modified_open_pos).await?;
 
         let closed_pos = ClosedPosition {
             id: self.open_pos.id,
@@ -813,7 +802,8 @@ impl<'a> Bot<'a> {
             risk_pct: self.open_pos.risk_pct,
             order_id: self.open_pos.order_id.clone(),
         };
-        self.store_position(self.pos, self.open_pos.clone()).await?;
+        self.store_position(self.pos, &self.open_pos.clone())
+            .await?;
 
         warn!("NEW SL for SHORT is: {:?}", target.sl);
 
@@ -831,8 +821,7 @@ impl<'a> Bot<'a> {
 
         self.open_pos.tp = Some(dec_price);
 
-        let exec_price: PlaceOrderData =
-            exchange.modify_market_order(self.open_pos.clone()).await?;
+        let exec_price: PlaceOrderData = exchange.modify_market_order(&self.open_pos).await?;
 
         info!("Ranger Covered SHORT at {:?}", exec_price);
 
@@ -1134,7 +1123,7 @@ impl<'a> Bot<'a> {
                     .await;
 
                     let exec_price: PlaceOrderData =
-                        exchange.place_market_order(self.open_pos.clone()).await?;
+                        exchange.place_market_order(&self.open_pos).await?;
                     info!("Ranger Long executed at {:?}", exec_price);
 
                     if exec_price.client_oid == "Failed to place order" {
@@ -1184,7 +1173,7 @@ impl<'a> Bot<'a> {
                     .await;
 
                     let exec_price: PlaceOrderData =
-                        exchange.place_market_order(self.open_pos.clone()).await?;
+                        exchange.place_market_order(&self.open_pos).await?;
                     info!("Ranger Short executed at {:?}", exec_price);
 
                     if exec_price.client_oid == "Failed to place order" {
@@ -1276,7 +1265,8 @@ impl<'a> Bot<'a> {
                 }
             }
         }
-        self.store_position(self.pos, self.open_pos.clone()).await?;
+        let pos_snapshot = self.open_pos.clone();
+        self.store_position(self.pos, &pos_snapshot).await?;
         Ok(())
     }
 

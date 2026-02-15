@@ -24,10 +24,10 @@ pub trait Exchange: Send + Sync {
     /// Place a market order.  
     /// `side` is BUY for long, SELL for short/cover.  
     /// Returns the executed price (for logging).
-    async fn place_market_order(&self, open_position: OpenPosition) -> Result<PlaceOrderData>;
+    async fn place_market_order(&self, open_position: &OpenPosition) -> Result<PlaceOrderData>;
 
     ///Used for executing taking profits and executing SL
-    async fn modify_market_order(&self, open_position: OpenPosition) -> Result<PlaceOrderData>;
+    async fn modify_market_order(&self, open_position: &OpenPosition) -> Result<PlaceOrderData>;
 
     /// Return the latest funding rate as a f64.
     async fn get_funding_rate(&self) -> Result<f64>;
@@ -90,14 +90,8 @@ impl Exchange for HttpExchange {
 
     async fn place_market_order(
         &self,
-        open_position: OpenPosition,
+        open_position: &OpenPosition,
     ) -> Result<PlaceOrderData, anyhow::Error> {
-        // For demo purposes we just log and pretend the order filled at current price.
-        // let price = self.get_current_price().await?;
-        // info!(
-        //     "Mock market {:?} for {:.6} {} at {price:.2}",
-        //     open_position.pos, open_position.entry_price, self.symbol
-        // );
         let new_bitget_futures = <HttpCandleData as bitget::FuturesCall>::new();
         let execute_call = new_bitget_futures.new_futures_call(open_position).await?;
         Ok(execute_call)
@@ -105,9 +99,8 @@ impl Exchange for HttpExchange {
 
     async fn modify_market_order(
         &self,
-        open_position: OpenPosition,
+        open_position: &OpenPosition,
     ) -> Result<PlaceOrderData, anyhow::Error> {
-        // For demo purposes we just log and pretend the order filled at current price.
         let price = self.get_current_price().await?;
         info!(
             "Mock market {:?} for {:.6} {} at {price:.2}",

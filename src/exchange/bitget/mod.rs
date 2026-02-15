@@ -159,9 +159,9 @@ pub trait FuturesCall {
     fn new() -> Self;
 
     /// Return the latest candles
-    async fn new_futures_call(&self, open_position: OpenPosition) -> Result<PlaceOrderData>;
+    async fn new_futures_call(&self, open_position: &OpenPosition) -> Result<PlaceOrderData>;
 
-    async fn modify_futures_order(&self, open_position: OpenPosition) -> Result<PlaceOrderData>;
+    async fn modify_futures_order(&self, open_position: &OpenPosition) -> Result<PlaceOrderData>;
 }
 
 /// Simple HTTP‑based mock of the `Exchange` trait – replace with your real SDK.
@@ -231,7 +231,7 @@ impl FuturesCall for HttpCandleData {
         }
     }
 
-    async fn modify_futures_order(&self, open_position: OpenPosition) -> Result<PlaceOrderData> {
+    async fn modify_futures_order(&self, open_position: &OpenPosition) -> Result<PlaceOrderData> {
         let api_key = &self.config.api_key;
         let secret = &self.config.api_secret;
         let passphrase = &self.config.passphrase;
@@ -313,7 +313,7 @@ impl FuturesCall for HttpCandleData {
         Ok(order_data)
     }
 
-    async fn new_futures_call(&self, open_position: OpenPosition) -> Result<PlaceOrderData> {
+    async fn new_futures_call(&self, open_position: &OpenPosition) -> Result<PlaceOrderData> {
         let api_key = &self.config.api_key;
         let secret = &self.config.api_secret;
         let passphrase = &self.config.passphrase;

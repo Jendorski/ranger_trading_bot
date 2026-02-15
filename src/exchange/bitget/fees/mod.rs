@@ -128,7 +128,7 @@ impl BitgetFuturesFees {
 
     pub async fn calc_pnl_for_exit(
         &self,
-        open_position: OpenPosition,
+        open_position: &OpenPosition,
         current_price: Decimal,
     ) -> (Decimal, Decimal) {
         let exit_fee = self
