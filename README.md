@@ -1,5 +1,7 @@
 # BTC Trading Bot
 
+![CI — Tests & Memory Checks](https://github.com/Jendorski/ranger_trading_bot/actions/workflows/ci.yml/badge.svg)
+
 A sophisticated Rust-based automated cryptocurrency trading bot for Bitcoin futures trading on the Bitget exchange. The bot implements advanced technical analysis strategies including Smart Money Concepts (SMC) and Ichimoku Cloud indicators to identify high-probability trade setups with automated risk management.
 
 ## 🎯 Overview
