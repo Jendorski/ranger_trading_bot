@@ -31,18 +31,6 @@ pub fn create_router(redis_conn: MultiplexedConnection) -> Router {
             "/api/positions/profit-targets",
             get(handlers::get_profit_targets),
         )
-        .route(
-            "/api/capitulation/closed",
-            get(handlers::get_capitulation_closed_positions),
-        )
-        .route(
-            "/api/capitulation/state",
-            get(handlers::get_capitulation_state),
-        )
-        .route(
-            "/api/capitulation/capital",
-            axum::routing::post(handlers::update_capitulation_capital),
-        )
         .route("/api/capital", get(handlers::get_trading_capital))
         .route("/api/analytics/weekly", get(handlers::get_weekly_roi))
         .route("/api/analytics/monthly", get(handlers::get_monthly_roi))

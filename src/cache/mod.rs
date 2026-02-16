@@ -16,25 +16,19 @@ impl RedisClient {
         loop {
             match client.get_multiplexed_async_connection().await {
                 Ok(conn) => {
-                    log::info!("Successfully connected to Redis at {}", url);
+                    log::info!("Successfully connected to Redis at {url}");
                     return Ok(Self { conn });
                 }
                 Err(e) => {
                     retries += 1;
                     if retries > max_retries {
                         log::error!(
-                            "Failed to connect to Redis after {} attempts: {}",
-                            max_retries,
-                            e
+                            "Failed to connect to Redis after {max_retries} attempts: {e}"
                         );
                         return Err(e);
                     }
                     log::warn!(
-                        "Redis connection failed (attempt {}/{}): {}. Retrying in {:?}...",
-                        retries,
-                        max_retries,
-                        e,
-                        delay
+                        "Redis connection failed (attempt {retries}/{max_retries}): {e}. Retrying in {delay:?}..."
                     );
                     tokio::time::sleep(delay).await;
                     delay = std::cmp::min(delay * 2, max_delay);

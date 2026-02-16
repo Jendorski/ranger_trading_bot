@@ -62,7 +62,7 @@ impl TryFrom<CalendarEvent> for EconomicEvent {
             &raw.time
         };
 
-        let dt_str = format!("{} {}", date_part, time_part);
+        let dt_str = format!("{date_part} {time_part}");
         let naive_dt = NaiveDateTime::parse_from_str(&dt_str, "%d/%m/%Y %H:%M")
             .map_err(|e| anyhow::anyhow!("Failed to parse date/time '{}': {}", dt_str, e))?;
 
@@ -97,7 +97,7 @@ impl EconomicEvent {
             match Self::try_from(raw) {
                 Ok(event) => events.push(event),
                 Err(e) => {
-                    log::warn!("Skipping event due to parsing error: {}", e);
+                    log::warn!("Skipping event due to parsing error: {e}");
                 }
             }
         }
@@ -137,11 +137,11 @@ impl EconomicEvent {
                     match Self::try_from(raw) {
                         Ok(event) => events.push(event),
                         Err(e) => {
-                            log::warn!("Failed to convert legacy Redis event: {}", e);
+                            log::warn!("Failed to convert legacy Redis event: {e}");
                         }
                     }
                 } else {
-                    log::warn!("Skipping invalid Redis event JSON: {}", j);
+                    log::warn!("Skipping invalid Redis event JSON: {j}");
                 }
             }
         }
@@ -185,6 +185,7 @@ impl EconomicEvent {
         Ok(filtered_events)
     }
 
+    #[allow(dead_code)]
     pub fn is_trading_allowed(now: DateTime<Utc>, windows: &[NoTradeWindow]) -> bool {
         !windows.iter().any(|w| now >= w.start && now <= w.end)
     }
@@ -219,6 +220,7 @@ impl EconomicEvent {
             .collect()
     }
 
+    #[allow(dead_code)]
     pub fn macro_trading_allowed(now: DateTime<Utc>, windows: &[NoTradeWindow]) -> bool {
         !windows.iter().any(|w| now >= w.start && now <= w.end)
     }
@@ -336,7 +338,7 @@ mod tests {
         ]"#;
 
         let mut temp_file = NamedTempFile::new()?;
-        write!(temp_file, "{}", json_data)?;
+        write!(temp_file, "{json_data}")?;
 
         let events = EconomicEvent::load_events(temp_file.path())?;
 

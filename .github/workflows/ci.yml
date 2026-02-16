@@ -1,166 +1,166 @@
 name: CI — Tests & Memory Checks
 
 on:
-  pull_request:
-    branches: [main, master]
-  push:
-    branches: [main, master]
+    pull_request:
+        branches: [main, master]
+    push:
+        branches: [main, master]
 
 env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-D warnings"
+    CARGO_TERM_COLOR: always
+    RUSTFLAGS: "-D warnings"
 
 jobs:
-  test:
-    name: Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    test:
+        name: Tests
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+            - name: Install Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo registry & build
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+            - name: Cache cargo registry & build
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      target
+                  key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+                  restore-keys: |
+                      ${{ runner.os }}-cargo-
 
-      - name: Run tests
-        run: cargo test --verbose
+            - name: Run tests
+              run: cargo test --verbose
 
-  clippy:
-    name: Clippy Lints
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    clippy:
+        name: Clippy Lints
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+            - name: Install Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
+              with:
+                  components: clippy
 
-      - name: Cache cargo registry & build
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-clippy-
+            - name: Cache cargo registry & build
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      target
+                  key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+                  restore-keys: |
+                      ${{ runner.os }}-cargo-clippy-
 
-      - name: Run Clippy
-        run: cargo clippy --all-targets -- -D warnings
+            - name: Run Clippy
+              run: cargo clippy --all-targets -- -D warnings
 
-  memory-checks:
-    name: Memory Optimization
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    memory-checks:
+        name: Memory Optimization
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+            - name: Install Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo registry & build
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-release-
+            - name: Cache cargo registry & build
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      target
+                  key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+                  restore-keys: |
+                      ${{ runner.os }}-cargo-release-
 
-      - name: Build release binary
-        run: cargo build --release
+            - name: Build release binary
+              run: cargo build --release
 
-      - name: Check binary size
-        run: |
-          BINARY="target/release/btc-trading-bot"
-          SIZE=$(stat --format=%s "$BINARY")
-          SIZE_MB=$(echo "scale=2; $SIZE / 1048576" | bc)
-          echo "## Binary Size: ${SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
-          echo "Binary size: ${SIZE_MB} MB ($SIZE bytes)"
+            - name: Check binary size
+              run: |
+                  BINARY="target/release/btc-trading-bot"
+                  SIZE=$(stat --format=%s "$BINARY")
+                  SIZE_MB=$(echo "$SIZE" | awk '{printf "%.2f", $1 / 1048576}')
+                  echo "## Binary Size: ${SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
+                  echo "Binary size: ${SIZE_MB} MB ($SIZE bytes)"
 
-          # Fail if binary exceeds 15 MB (generous threshold)
-          MAX_SIZE=$((15 * 1048576))
-          if [ "$SIZE" -gt "$MAX_SIZE" ]; then
-            echo "::error::Binary size ${SIZE_MB} MB exceeds 15 MB limit"
-            exit 1
-          fi
+                  # Fail if binary exceeds 15 MB (generous threshold)
+                  MAX_SIZE=$((15 * 1048576))
+                  if [ "$SIZE" -gt "$MAX_SIZE" ]; then
+                    echo "::error::Binary size ${SIZE_MB} MB exceeds 15 MB limit"
+                    exit 1
+                  fi
 
-      - name: Check for unbounded Redis lists (missing LTRIM)
-        run: |
-          echo "### Checking for unbounded Redis LPUSH without LTRIM..." >> $GITHUB_STEP_SUMMARY
+            - name: Check for unbounded Redis lists (missing LTRIM)
+              run: |
+                  echo "### Checking for unbounded Redis LPUSH without LTRIM..." >> $GITHUB_STEP_SUMMARY
 
-          # Find LPUSH calls and check if LTRIM exists nearby
-          LPUSH_FILES=$(grep -rn "\.lpush(" src/ --include="*.rs" | grep -v "test" || true)
+                  # Find LPUSH calls and check if LTRIM exists nearby
+                  LPUSH_FILES=$(grep -rn "\.lpush(" src/ --include="*.rs" | grep -v "test" || true)
 
-          if [ -n "$LPUSH_FILES" ]; then
-            echo "Found LPUSH calls:" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "$LPUSH_FILES" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
+                  if [ -n "$LPUSH_FILES" ]; then
+                    echo "Found LPUSH calls:" >> $GITHUB_STEP_SUMMARY
+                    echo '```' >> $GITHUB_STEP_SUMMARY
+                    echo "$LPUSH_FILES" >> $GITHUB_STEP_SUMMARY
+                    echo '```' >> $GITHUB_STEP_SUMMARY
 
-            # Check if any ltrim exists in the codebase
-            LTRIM_COUNT=$(grep -rn "\.ltrim(" src/ --include="*.rs" | wc -l || echo "0")
-            if [ "$LTRIM_COUNT" -eq 0 ]; then
-              echo "::warning::No LTRIM calls found — Redis lists may grow unbounded. Consider adding LTRIM after LPUSH."
-            fi
-          fi
+                    # Check if any ltrim exists in the codebase
+                    LTRIM_COUNT=$(grep -rn "\.ltrim(" src/ --include="*.rs" | wc -l || echo "0")
+                    if [ "$LTRIM_COUNT" -eq 0 ]; then
+                      echo "::warning::No LTRIM calls found — Redis lists may grow unbounded. Consider adding LTRIM after LPUSH."
+                    fi
+                  fi
 
-      - name: Check for unnecessary .clone() on OpenPosition
-        run: |
-          echo "### OpenPosition Clone Analysis" >> $GITHUB_STEP_SUMMARY
+            - name: Check for unnecessary .clone() on OpenPosition
+              run: |
+                  echo "### OpenPosition Clone Analysis" >> $GITHUB_STEP_SUMMARY
 
-          CLONE_COUNT=$(grep -rn "open_pos\.clone()\|open_position\.clone()" src/ --include="*.rs" | wc -l)
-          echo "OpenPosition .clone() calls: $CLONE_COUNT" >> $GITHUB_STEP_SUMMARY
+                  CLONE_COUNT=$(grep -rn "open_pos\.clone()\|open_position\.clone()" src/ --include="*.rs" | wc -l)
+                  echo "OpenPosition .clone() calls: $CLONE_COUNT" >> $GITHUB_STEP_SUMMARY
 
-          # Warn if clone count increases beyond current baseline (3 remaining)
-          BASELINE=3
-          if [ "$CLONE_COUNT" -gt "$BASELINE" ]; then
-            echo "::warning::OpenPosition .clone() count ($CLONE_COUNT) exceeds baseline ($BASELINE). Review if new clones are necessary."
-          fi
+                  # Warn if clone count increases beyond current baseline (3 remaining)
+                  BASELINE=3
+                  if [ "$CLONE_COUNT" -gt "$BASELINE" ]; then
+                    echo "::warning::OpenPosition .clone() count ($CLONE_COUNT) exceeds baseline ($BASELINE). Review if new clones are necessary."
+                  fi
 
-      - name: Check for unbounded Vec/HashMap growth patterns
-        run: |
-          echo "### Unbounded Collection Checks" >> $GITHUB_STEP_SUMMARY
+            - name: Check for unbounded Vec/HashMap growth patterns
+              run: |
+                  echo "### Unbounded Collection Checks" >> $GITHUB_STEP_SUMMARY
 
-          # Check for Vec::push without corresponding truncation
-          PUSH_LINES=$(grep -rn "\.push(" src/ --include="*.rs" | grep -v "test" | grep -v "//") || true
-          PUSH_COUNT=$(echo "$PUSH_LINES" | grep -c "." || echo "0")
-          echo "Vec::push calls (non-test): $PUSH_COUNT" >> $GITHUB_STEP_SUMMARY
+                  # Check for Vec::push without corresponding truncation
+                  PUSH_LINES=$(grep -rn "\.push(" src/ --include="*.rs" | grep -v "test" | grep -v "//") || true
+                  PUSH_COUNT=$(echo "$PUSH_LINES" | grep -c "." || echo "0")
+                  echo "Vec::push calls (non-test): $PUSH_COUNT" >> $GITHUB_STEP_SUMMARY
 
-          # Check for HashMap::entry().or_default/or_insert without retain/remove
-          ENTRY_COUNT=$(grep -rn "\.entry(" src/ --include="*.rs" | grep -v "test" | wc -l || echo "0")
-          RETAIN_COUNT=$(grep -rn "\.retain(" src/ --include="*.rs" | grep -v "test" | wc -l || echo "0")
-          REMOVE_COUNT=$(grep -rn "\.remove(" src/ --include="*.rs" | grep -v "test" | wc -l || echo "0")
+                  # Check for HashMap::entry().or_default/or_insert without retain/remove
+                  ENTRY_COUNT=$(grep -rn "\.entry(" src/ --include="*.rs" | grep -v "test" | wc -l || echo "0")
+                  RETAIN_COUNT=$(grep -rn "\.retain(" src/ --include="*.rs" | grep -v "test" | wc -l || echo "0")
+                  REMOVE_COUNT=$(grep -rn "\.remove(" src/ --include="*.rs" | grep -v "test" | wc -l || echo "0")
 
-          echo "HashMap .entry() calls: $ENTRY_COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "HashMap .retain() calls: $RETAIN_COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "HashMap .remove() calls: $REMOVE_COUNT" >> $GITHUB_STEP_SUMMARY
+                  echo "HashMap .entry() calls: $ENTRY_COUNT" >> $GITHUB_STEP_SUMMARY
+                  echo "HashMap .retain() calls: $RETAIN_COUNT" >> $GITHUB_STEP_SUMMARY
+                  echo "HashMap .remove() calls: $REMOVE_COUNT" >> $GITHUB_STEP_SUMMARY
 
-          if [ "$ENTRY_COUNT" -gt 0 ] && [ "$RETAIN_COUNT" -eq 0 ] && [ "$REMOVE_COUNT" -eq 0 ]; then
-            echo "::warning::HashMap entries are inserted but never cleaned up. Consider adding eviction logic."
-          fi
+                  if [ "$ENTRY_COUNT" -gt 0 ] && [ "$RETAIN_COUNT" -eq 0 ] && [ "$REMOVE_COUNT" -eq 0 ]; then
+                    echo "::warning::HashMap entries are inserted but never cleaned up. Consider adding eviction logic."
+                  fi
 
-      - name: Dependency count check
-        run: |
-          DEPS=$(cargo tree --depth 0 -e normal 2>/dev/null | wc -l || echo "unknown")
-          TOTAL_DEPS=$(cargo tree -e normal 2>/dev/null | wc -l || echo "unknown")
-          echo "### Dependency Footprint" >> $GITHUB_STEP_SUMMARY
-          echo "- Direct dependencies: $DEPS" >> $GITHUB_STEP_SUMMARY
-          echo "- Total (transitive): $TOTAL_DEPS" >> $GITHUB_STEP_SUMMARY
+            - name: Dependency count check
+              run: |
+                  DEPS=$(cargo tree --depth 0 -e normal 2>/dev/null | wc -l || echo "unknown")
+                  TOTAL_DEPS=$(cargo tree -e normal 2>/dev/null | wc -l || echo "unknown")
+                  echo "### Dependency Footprint" >> $GITHUB_STEP_SUMMARY
+                  echo "- Direct dependencies: $DEPS" >> $GITHUB_STEP_SUMMARY
+                  echo "- Total (transitive): $TOTAL_DEPS" >> $GITHUB_STEP_SUMMARY
 
-          # Warn if transitive deps exceed 600
-          if [ "$TOTAL_DEPS" -gt 600 ]; then
-            echo "::warning::Transitive dependency count ($TOTAL_DEPS) is high. Consider auditing dependencies."
-          fi
+                  # Warn if transitive deps exceed 600
+                  if [ "$TOTAL_DEPS" -gt 600 ]; then
+                    echo "::warning::Transitive dependency count ($TOTAL_DEPS) is high. Consider auditing dependencies."
+                  fi

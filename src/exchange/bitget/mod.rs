@@ -66,6 +66,7 @@ pub struct FundingRateData {
     pub funding_time: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OrderDetail {
     pub symbol: String,
@@ -192,10 +193,21 @@ impl CandleData for HttpCandleData {
         let bitget = self.client.get(url).send().await?;
 
         let bit_text = bitget.text().await?;
+        let response: ApiResponse<Vec<Candle>> = serde_json::from_str(&bit_text).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to parse Bitget candles: {}, response text: {}",
+                e,
+                bit_text
+            )
+        })?;
 
-        let response: ApiResponse<Vec<Candle>> = serde_json::from_str(&bit_text).unwrap();
-        assert_eq!(response.code, "00000");
-        assert_eq!(response.msg, "success");
+        if response.code != "00000" {
+            return Err(anyhow::anyhow!(
+                "Bitget API error (code {}): {}",
+                response.code,
+                response.msg
+            ));
+        }
         // assert_eq!(response.data.len(), limit.parse::<usize>().unwrap());
 
         let candles = response.data;
@@ -273,7 +285,7 @@ impl FuturesCall for HttpCandleData {
 
         let timestamp = Utc::now().timestamp_millis().to_string();
 
-        let sign = encryption::bitget_sign(&secret, &timestamp, method, path, None, Some(&body));
+        let sign = encryption::bitget_sign(secret, &timestamp, method, path, None, Some(&body));
 
         let client = Client::new();
         let response = client
@@ -287,19 +299,17 @@ impl FuturesCall for HttpCandleData {
             .send()
             .await?;
         let response_txt = response.text().await?;
-        info!("response_txt: {:?}", response_txt);
+        info!("response_txt: {response_txt:?}");
 
         let response: ApiResponse<PlaceOrderData> =
-            serde_json::from_str(&response_txt).unwrap_or(ApiResponse {
-                code: "4000".to_string(),
-                msg: "Error".to_string(),
-                request_time: Utc::now().timestamp(),
-                data: PlaceOrderData {
-                    client_oid: String::from("Failed to modify order"),
-                    order_id: String::from("Failed to modify order"),
-                },
-            });
-        info!("response::modify_futures_order -> {:?}", response);
+            serde_json::from_str(&response_txt).map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to parse Bitget place-order response: {}, response text: {}",
+                    e,
+                    response_txt
+                )
+            })?;
+        info!("response::modify_futures_order -> {response:?}");
 
         if response.code != "00000" {
             return Ok(PlaceOrderData {
@@ -362,7 +372,7 @@ impl FuturesCall for HttpCandleData {
 
         let timestamp = Utc::now().timestamp_millis().to_string();
 
-        let sign = encryption::bitget_sign(&secret, &timestamp, method, path, None, Some(&body));
+        let sign = encryption::bitget_sign(secret, &timestamp, method, path, None, Some(&body));
 
         let client = Client::new();
         let response = client
@@ -376,18 +386,16 @@ impl FuturesCall for HttpCandleData {
             .send()
             .await?;
         let response_txt = response.text().await?;
-        info!("response_txt: {:?}", response_txt);
+        info!("response_txt: {response_txt:?}");
 
         let response_json: ApiResponse<PlaceOrderData> = serde_json::from_str(&response_txt)
-            .unwrap_or(ApiResponse {
-                code: "4000".to_string(),
-                msg: "An error occurred".to_string(),
-                request_time: Utc::now().timestamp(),
-                data: PlaceOrderData {
-                    client_oid: String::from("Failed to place order"),
-                    order_id: String::from("Failed to place order"),
-                },
-            }); //.expect("An error occurred");
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to parse Bitget new-order response: {}, response text: {}",
+                    e,
+                    response_txt
+                )
+            })?;
 
         if response_json.code != "00000" {
             return Ok(PlaceOrderData {
@@ -432,7 +440,7 @@ pub struct Prices {
 }
 
 pub fn parse_price_response(json: &str) -> Result<Vec<Prices>> {
-    let response: PriceResponse = serde_json::from_str::<PriceResponse>(&json)?;
+    let response: PriceResponse = serde_json::from_str::<PriceResponse>(json)?;
 
     let prices = response
         .data
@@ -448,9 +456,9 @@ pub fn parse_price_response(json: &str) -> Result<Vec<Prices>> {
 }
 
 pub fn get_prices(json: &str) -> Option<Prices> {
-    return parse_price_response(json)
+    parse_price_response(json)
         .ok()
-        .and_then(|mut prices| prices.pop());
+        .and_then(|mut prices| prices.pop())
 }
 
 // WebSocket Tickers Channel Types
@@ -529,6 +537,7 @@ pub struct WsCandleData {
 /// - "5m" -> "candle5m"
 /// - "1h" or "1H" -> "candle1H"
 /// - "1d" or "1D" -> "candle1D"
+#[allow(dead_code)]
 pub fn parse_timeframe_to_channel(timeframe: &str) -> Result<String> {
     let channel = match timeframe.to_lowercase().as_str() {
         "1m" => "candle1m",
@@ -559,7 +568,7 @@ impl BitgetWsClient {
     ) -> Result<impl futures_util::Stream<Item = Result<WsTickerData>>, Box<dyn std::error::Error>>
     {
         let url = "wss://ws.bitget.com/v2/ws/public";
-        info!("Connecting to Bitget WebSocket: {}", url);
+        info!("Connecting to Bitget WebSocket: {url}");
 
         let (ws_stream, _) = connect_async(url).await?;
         let (mut write, mut read) = ws_stream.split();
@@ -584,7 +593,7 @@ impl BitgetWsClient {
             loop {
                 if last_ping.elapsed() >= ping_interval {
                     if let Err(e) = write.send(Message::Text("ping".to_string().into())).await {
-                        error!("Failed to send ping: {}", e);
+                        error!("Failed to send ping: {e}");
                         break;
                     }
                     last_ping = std::time::Instant::now();
@@ -606,7 +615,7 @@ impl BitgetWsClient {
                     }
                     std::result::Result::Ok(Some(std::result::Result::Ok(Message::Close(_)))) => break,
                     std::result::Result::Ok(Some(std::result::Result::Err(e))) => {
-                        error!("WS error: {}", e);
+                        error!("WS error: {e}");
                         break;
                     }
                     std::result::Result::Ok(None) => break,
@@ -619,6 +628,7 @@ impl BitgetWsClient {
         std::result::Result::Ok(Box::pin(stream))
     }
 
+    #[allow(dead_code)]
     pub async fn subscribe_candlesticks(
         inst_type: &str,
         inst_id: &str,
@@ -626,9 +636,9 @@ impl BitgetWsClient {
     ) -> Result<impl futures_util::Stream<Item = Result<WsCandleData>>, Box<dyn std::error::Error>>
     {
         let url = "wss://ws.bitget.com/v2/ws/public";
-        info!("Connecting to Bitget WebSocket for candlesticks: {}", url);
+        info!("Connecting to Bitget WebSocket for candlesticks: {url}");
 
-        let channel = parse_timeframe_to_channel(timeframe).map_err(|e| format!("{}", e))?;
+        let channel = parse_timeframe_to_channel(timeframe).map_err(|e| format!("{e}"))?;
 
         let (ws_stream, _) = connect_async(url).await?;
         let (mut write, mut read) = ws_stream.split();
@@ -642,7 +652,7 @@ impl BitgetWsClient {
             }]
         });
 
-        info!("Subscribing to candlesticks: {}", subscribe_msg);
+        info!("Subscribing to candlesticks: {subscribe_msg}");
         write
             .send(Message::Text(subscribe_msg.to_string().into()))
             .await?;
@@ -654,7 +664,7 @@ impl BitgetWsClient {
             loop {
                 if last_ping.elapsed() >= ping_interval {
                     if let Err(e) = write.send(Message::Text("ping".to_string().into())).await {
-                        error!("Failed to send ping: {}", e);
+                        error!("Failed to send ping: {e}");
                         break;
                     }
                     last_ping = std::time::Instant::now();
@@ -676,7 +686,7 @@ impl BitgetWsClient {
                     }
                     std::result::Result::Ok(Some(std::result::Result::Ok(Message::Close(_)))) => break,
                     std::result::Result::Ok(Some(std::result::Result::Err(e))) => {
-                        error!("WS error: {}", e);
+                        error!("WS error: {e}");
                         break;
                     }
                     std::result::Result::Ok(None) => break,

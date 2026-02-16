@@ -31,6 +31,7 @@ pub trait Exchange: Send + Sync {
 
     /// Return the latest funding rate as a f64.
     async fn get_funding_rate(&self) -> Result<f64>;
+    #[allow(dead_code)]
     async fn get_fee_rates(&self) -> Result<VipFeeRate>;
 }
 
@@ -40,6 +41,7 @@ pub trait Exchange: Send + Sync {
 pub struct HttpExchange {
     pub client: reqwest::Client,
     pub(crate) symbol: String,
+    #[allow(dead_code)]
     pub redis_conn: redis::aio::MultiplexedConnection,
 }
 

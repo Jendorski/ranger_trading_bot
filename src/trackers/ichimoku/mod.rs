@@ -14,11 +14,11 @@ use crate::exchange::bitget::Candle;
 use crate::helper::Helper;
 use crate::helper::{LAST_25_WEEKLY_ICHIMOKU_SPANS, WEEKLY_CANDLES, WEEKLY_ICHIMOKU};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TenkanKijunCross {
-    Bullish,
-    Bearish,
-}
+// #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// pub enum TenkanKijunCross {
+//     Bullish,
+//     Bearish,
+// }
 
 // pub enum CrossStrength {
 //     StrongBullish,
@@ -27,9 +27,12 @@ pub enum TenkanKijunCross {
 //     WeakBearish,
 // }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KumoCross {
+    #[allow(dead_code)]
     Bullish,
+    #[allow(dead_code)]
     Bearish,
 }
 
@@ -63,11 +66,11 @@ pub async fn ichimoku_loop(redis_conn: MultiplexedConnection) -> Result<()> {
 
         match result {
             Ok(Err(e)) => {
-                eprintln!("CRITICAL ERROR in ichimoku_loop: {:?}", e);
-                eprintln!("Retrying in {} seconds...", loop_interval_seconds);
+                eprintln!("CRITICAL ERROR in ichimoku_loop: {e:?}");
+                eprintln!("Retrying in {loop_interval_seconds} seconds...");
             }
             Err(e) => {
-                eprintln!("Task Join Error: {:?}", e);
+                eprintln!("Task Join Error: {e:?}");
             }
             _ => {}
         }
@@ -87,16 +90,16 @@ pub async fn ichimoku_loop(redis_conn: MultiplexedConnection) -> Result<()> {
 }
 
 fn download_large_file(url: &str, path: &str) -> Result<()> {
-    println!("Downloading {}...", url);
+    println!("Downloading {url}...");
 
     let mut response = reqwest::blocking::get(url)?;
     let mut temp = tempfile::NamedTempFile::new()?;
     io::copy(&mut response, &mut temp)?;
 
     temp.persist(path)?;
-    println!("Downloaded {}", url);
+    println!("Downloaded {url}");
 
-    println!("Extracting {}...", path);
+    println!("Extracting {path}...");
     let file = fs::File::open(path)?;
     let mut archive = zip::ZipArchive::new(file)?;
     let parent_dir = Path::new(path).parent().unwrap_or(Path::new("."));
@@ -120,7 +123,7 @@ fn download_large_file(url: &str, path: &str) -> Result<()> {
             io::copy(&mut file, &mut outfile)?;
         }
     }
-    println!("Extracted {}", path);
+    println!("Extracted {path}");
 
     Ok(())
 }
@@ -176,7 +179,7 @@ fn ichimoku_processor(
         }
     }
 
-    let bounds = kumo_bounds(&span_a, &span_b);
+    //let bounds = kumo_bounds(&span_a, &span_b);
     //println!("bounds: {:?}", bounds);
 
     //println!("span_a: {:?}", span_a);
@@ -191,54 +194,54 @@ fn ichimoku_processor(
     }
 }
 
-fn tenkan_kijun_cross(
-    tenkan: &[Option<f64>],
-    kijun: &[Option<f64>],
-) -> Vec<Option<TenkanKijunCross>> {
-    let len = tenkan.len().min(kijun.len());
-    let mut signals = vec![None; len];
+// fn tenkan_kijun_cross(
+//     tenkan: &[Option<f64>],
+//     kijun: &[Option<f64>],
+// ) -> Vec<Option<TenkanKijunCross>> {
+//     let len = tenkan.len().min(kijun.len());
+//     let mut signals = vec![None; len];
 
-    for i in 1..len {
-        let (t_prev, k_prev) = (tenkan[i - 1], kijun[i - 1]);
-        let (t_now, k_now) = (tenkan[i], kijun[i]);
+//     for i in 1..len {
+//         let (t_prev, k_prev) = (tenkan[i - 1], kijun[i - 1]);
+//         let (t_now, k_now) = (tenkan[i], kijun[i]);
 
-        if let (Some(tp), Some(kp), Some(tn), Some(kn)) = (t_prev, k_prev, t_now, k_now) {
-            // Bullish cross
-            if tp <= kp && tn > kn {
-                signals[i] = Some(TenkanKijunCross::Bullish);
-            }
+//         if let (Some(tp), Some(kp), Some(tn), Some(kn)) = (t_prev, k_prev, t_now, k_now) {
+//             // Bullish cross
+//             if tp <= kp && tn > kn {
+//                 signals[i] = Some(TenkanKijunCross::Bullish);
+//             }
 
-            // Bearish cross
-            if tp >= kp && tn < kn {
-                signals[i] = Some(TenkanKijunCross::Bearish);
-            }
-        }
-    }
+//             // Bearish cross
+//             if tp >= kp && tn < kn {
+//                 signals[i] = Some(TenkanKijunCross::Bearish);
+//             }
+//         }
+//     }
 
-    signals
-}
+//     signals
+// }
 
-fn kumo_bounds(
-    span_a: &[Option<f64>],
-    span_b: &[Option<f64>],
-) -> (Vec<Option<f64>>, Vec<Option<f64>>) {
-    let len = span_a.len().min(span_b.len());
+// fn kumo_bounds(
+//     span_a: &[Option<f64>],
+//     span_b: &[Option<f64>],
+// ) -> (Vec<Option<f64>>, Vec<Option<f64>>) {
+//     let len = span_a.len().min(span_b.len());
 
-    let mut upper = vec![None; len];
-    let mut lower = vec![None; len];
+//     let mut upper = vec![None; len];
+//     let mut lower = vec![None; len];
 
-    for i in 0..len {
-        match (span_a[i], span_b[i]) {
-            (Some(a), Some(b)) => {
-                upper[i] = Some(a.max(b));
-                lower[i] = Some(a.min(b));
-            }
-            _ => {}
-        }
-    }
+//     for i in 0..len {
+//         match (span_a[i], span_b[i]) {
+//             (Some(a), Some(b)) => {
+//                 upper[i] = Some(a.max(b));
+//                 lower[i] = Some(a.min(b));
+//             }
+//             _ => {}
+//         }
+//     }
 
-    (upper, lower)
-}
+//     (upper, lower)
+// }
 
 fn get_last_25_spans(
     span_a: &[Option<f64>],
@@ -247,8 +250,8 @@ fn get_last_25_spans(
     let len_a = span_a.len();
     let len_b = span_b.len();
 
-    let start_a = if len_a > 25 { len_a - 25 } else { 0 };
-    let start_b = if len_b > 25 { len_b - 25 } else { 0 };
+    let start_a = len_a.saturating_sub(25);
+    let start_b = len_b.saturating_sub(25);
 
     (span_a[start_a..].to_vec(), span_b[start_b..].to_vec())
 }
@@ -281,59 +284,59 @@ async fn process_weekly_ichimoku(mut redis_conn: MultiplexedConnection) -> Resul
     Ok(())
 }
 
-pub fn kumo_cross(span_a: &[Option<f64>], span_b: &[Option<f64>]) -> Vec<Option<KumoCross>> {
-    let len = span_a.len().min(span_b.len());
-    let mut signals = vec![None; len];
+// pub fn kumo_cross(span_a: &[Option<f64>], span_b: &[Option<f64>]) -> Vec<Option<KumoCross>> {
+//     let len = span_a.len().min(span_b.len());
+//     let mut signals = vec![None; len];
 
-    for i in 1..len {
-        let (a_prev, b_prev) = (span_a[i - 1], span_b[i - 1]);
-        let (a_now, b_now) = (span_a[i], span_b[i]);
+//     for i in 1..len {
+//         let (a_prev, b_prev) = (span_a[i - 1], span_b[i - 1]);
+//         let (a_now, b_now) = (span_a[i], span_b[i]);
 
-        if let (Some(ap), Some(bp), Some(an), Some(bn)) = (a_prev, b_prev, a_now, b_now) {
-            // Bullish Kumo flip
-            if ap <= bp && an > bn {
-                signals[i] = Some(KumoCross::Bullish);
-            }
+//         if let (Some(ap), Some(bp), Some(an), Some(bn)) = (a_prev, b_prev, a_now, b_now) {
+//             // Bullish Kumo flip
+//             if ap <= bp && an > bn {
+//                 signals[i] = Some(KumoCross::Bullish);
+//             }
 
-            // Bearish Kumo flip
-            if ap >= bp && an < bn {
-                signals[i] = Some(KumoCross::Bearish);
-            }
-        }
-    }
+//             // Bearish Kumo flip
+//             if ap >= bp && an < bn {
+//                 signals[i] = Some(KumoCross::Bearish);
+//             }
+//         }
+//     }
 
-    signals
-}
+//     signals
+// }
 
-pub fn kumo_cross_from_bounds(
-    upper: &[Option<f64>],
-    lower: &[Option<f64>],
-    span_a: &[Option<f64>],
-) -> Vec<Option<KumoCross>> {
-    let len = upper.len().min(span_a.len());
-    let mut signals = vec![None; len];
+// pub fn kumo_cross_from_bounds(
+//     upper: &[Option<f64>],
+//     lower: &[Option<f64>],
+//     span_a: &[Option<f64>],
+// ) -> Vec<Option<KumoCross>> {
+//     let len = upper.len().min(span_a.len());
+//     let mut signals = vec![None; len];
 
-    for i in 1..len {
-        if let (Some(a_prev), Some(u_prev), Some(_l_prev), Some(a_now), Some(u_now), Some(_l_now)) = (
-            span_a[i - 1],
-            upper[i - 1],
-            lower[i - 1],
-            span_a[i],
-            upper[i],
-            lower[i],
-        ) {
-            let prev_bull = (u_prev - a_prev).abs() < 1e-9;
-            let now_bull = (u_now - a_now).abs() < 1e-9;
+//     for i in 1..len {
+//         if let (Some(a_prev), Some(u_prev), Some(_l_prev), Some(a_now), Some(u_now), Some(_l_now)) = (
+//             span_a[i - 1],
+//             upper[i - 1],
+//             lower[i - 1],
+//             span_a[i],
+//             upper[i],
+//             lower[i],
+//         ) {
+//             let prev_bull = (u_prev - a_prev).abs() < 1e-9;
+//             let now_bull = (u_now - a_now).abs() < 1e-9;
 
-            if !prev_bull && now_bull {
-                signals[i] = Some(KumoCross::Bullish);
-            }
+//             if !prev_bull && now_bull {
+//                 signals[i] = Some(KumoCross::Bullish);
+//             }
 
-            if prev_bull && !now_bull {
-                signals[i] = Some(KumoCross::Bearish);
-            }
-        }
-    }
+//             if prev_bull && !now_bull {
+//                 signals[i] = Some(KumoCross::Bearish);
+//             }
+//         }
+//     }
 
-    signals
-}
+//     signals
+// }

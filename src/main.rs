@@ -56,7 +56,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let ichimoku_conn = redis_conn.clone();
         let _tracker_ichimoku = tokio::spawn(async move {
             if let Err(e) = trackers::ichimoku::ichimoku_loop(ichimoku_conn).await {
-                log::error!("Ichimoku tracker error: {}", e);
+                log::error!("Ichimoku tracker error: {e}");
             }
         });
     }
@@ -72,7 +72,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         info!("API server listening on http://0.0.0.0:4545");
 
         if let Err(e) = axum::serve(listener, app).await {
-            log::error!("API server error: {}", e);
+            log::error!("API server error: {e}");
         }
     });
 
@@ -81,7 +81,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if let Err(e) = //bot.test(exchange.as_ref()).await {
         bot.start_live_trading(exchange.as_ref()).await
     {
-        log::error!("Bot loop error: {}", e);
+        log::error!("Bot loop error: {e}");
     }
 
     Ok(())

@@ -5,7 +5,6 @@ use chrono::Utc;
 use redis::{aio::MultiplexedConnection, AsyncCommands};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
-use serde_json;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -244,10 +243,9 @@ impl Graph {
 
         // ----- Aggregated results --------------------------------------------
         println!("\n------------------------------------------------------------------------");
-        println!("\nCumulative realised PnL: ${:.2}", total_pnl);
+        println!("\nCumulative realised PnL: ${total_pnl:.2}");
         println!(
-            "Cumulative margin used (across all trades): ${:.2},",
-            total_margin
+            "Cumulative margin used (across all trades): ${total_margin:.2},"
         );
 
         let overall_roi = if !total_margin.is_zero() && !total_pnl.is_zero() {
@@ -264,7 +262,7 @@ impl Graph {
         println!("--- Cumulative ROI % per week ---");
         //((y, w), pct)
         for ((y, w), pct) in Self::cumulative_roi_weekly(self, &positions) {
-            println!("{:04}-W{:02}: {:.2} %", y, w, pct);
+            println!("{y:04}-W{w:02}: {pct:.2} %");
         }
 
         // ------------------------------------------------------------------
@@ -272,7 +270,7 @@ impl Graph {
         // ------------------------------------------------------------------
         println!("\n--- Cumulative ROI % per month ---"); //((y, m), roi)
         for ((y, m), roi) in Self::cumulative_roi_monthly(self, &positions) {
-            println!("{:04}-{:02}: {:.2} %", y, m, roi); //* 100.0
+            println!("{y:04}-{m:02}: {roi:.2} %"); //* 100.0
         }
         println!("\n------------------------------------------------------------------------");
 
