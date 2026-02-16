@@ -81,6 +81,7 @@ impl fmt::Display for PartialProfitTarget {
 }
 
 impl Helper {
+    #[allow(dead_code)]
     pub fn from_config() -> Helper {
         let config = Config::from_env().expect("NO CONFIGURATION");
         Self { config }
@@ -125,7 +126,6 @@ impl Helper {
     }
 
     pub fn calc_roi(
-        &mut self,
         margin: Decimal,
         entry_price: Decimal,
         pos: Position,
@@ -492,8 +492,7 @@ mod tests {
 
     #[test]
     fn test_calc_roi_zero_margin() {
-        let mut helper = Helper::from_config();
-        let roi = helper.calc_roi(
+        let roi = Helper::calc_roi(
             dec!(0.00),
             dec!(50000.0),
             Position::Long,

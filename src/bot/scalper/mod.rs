@@ -136,12 +136,11 @@ impl ScalperBot {
 
     async fn close_long_position(&mut self, price: f64, config: &mut Config) {
         let roi = Helper::calc_roi(
-            &mut Helper::from_config(),
-            self.scalp_open_pos.margin.unwrap_or(config.margin),
-            self.scalp_open_pos.entry_price,
+            Helper::f64_to_decimal(self.scalp_open_pos.margin.unwrap_or(config.margin)),
+            Helper::f64_to_decimal(self.scalp_open_pos.entry_price),
             self.scalp_pos,
-            self.scalp_open_pos.position_size,
-            price,
+            Helper::f64_to_decimal(self.scalp_open_pos.position_size),
+            Helper::f64_to_decimal(price),
         );
         let closed_pos = ClosedPosition {
             id: self.scalp_open_pos.id,
@@ -174,12 +173,11 @@ impl ScalperBot {
             price,
         );
         let roi = Helper::calc_roi(
-            &mut Helper::from_config(),
-            self.scalp_open_pos.margin.unwrap_or(config.margin),
-            self.scalp_open_pos.entry_price,
+            Helper::f64_to_decimal(self.scalp_open_pos.margin.unwrap_or(config.margin)),
+            Helper::f64_to_decimal(self.scalp_open_pos.entry_price),
             self.scalp_open_pos.pos,
-            self.scalp_open_pos.position_size,
-            price,
+            Helper::f64_to_decimal(self.scalp_open_pos.position_size),
+            Helper::f64_to_decimal(price),
         );
         let closed_pos = ClosedPosition {
             id: self.scalp_open_pos.id,

@@ -180,7 +180,6 @@ impl Graph {
         //if pnl != 0.00 && margin != 0.00 {
         if !pnl.is_zero() && !margin.is_zero() {
             roi = Helper::calc_roi(
-                &mut Helper::from_config(),
                 margin,
                 pos.entry_price,
                 pos.position.unwrap_or(bot::Position::Flat),
@@ -244,9 +243,7 @@ impl Graph {
         // ----- Aggregated results --------------------------------------------
         println!("\n------------------------------------------------------------------------");
         println!("\nCumulative realised PnL: ${total_pnl:.2}");
-        println!(
-            "Cumulative margin used (across all trades): ${total_margin:.2},"
-        );
+        println!("Cumulative margin used (across all trades): ${total_margin:.2},");
 
         let overall_roi = if !total_margin.is_zero() && !total_pnl.is_zero() {
             //total_margin != 0.0

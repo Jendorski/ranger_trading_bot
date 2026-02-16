@@ -334,7 +334,6 @@ impl<'a> Bot<'a> {
     pub async fn close_long_position(&mut self, price: Decimal) -> Result<()> {
         let dec_config_margin = Helper::f64_to_decimal(self.config.margin);
         let roi = Helper::calc_roi(
-            &mut Helper::from_config(),
             self.open_pos.margin.unwrap_or(dec_config_margin),
             self.open_pos.entry_price,
             self.pos,
@@ -386,8 +385,7 @@ impl<'a> Bot<'a> {
             if let Some(zone) = zone {
                 warn!(
                     "Losing zone found for price: {}; zone: {:?}",
-                    self.open_pos.entry_price,
-                    zone
+                    self.open_pos.entry_price, zone
                 );
                 let zone_id = ZoneId::from_zone(zone);
                 self.zone_guard
@@ -487,7 +485,6 @@ impl<'a> Bot<'a> {
             "close_short_position: pnl, pnl_after_fees, exit_fees -> {pnl:?}, {pnl_after_fees:?}, {exit_fee:?}"
         );
         let roi = Helper::calc_roi(
-            &mut Helper::from_config(),
             self.open_pos
                 .margin
                 .unwrap_or(Helper::f64_to_decimal(self.config.margin)),
@@ -533,8 +530,7 @@ impl<'a> Bot<'a> {
             if let Some(zone) = zone {
                 warn!(
                     "Losing zone found for price: {}; zone: {:?}",
-                    self.open_pos.entry_price,
-                    zone
+                    self.open_pos.entry_price, zone
                 );
                 let zone_id = ZoneId::from_zone(zone);
                 self.zone_guard
@@ -604,7 +600,6 @@ impl<'a> Bot<'a> {
         }
 
         let roi = Helper::calc_roi(
-            &mut Helper::from_config(),
             self.open_pos
                 .margin
                 .unwrap_or(Helper::f64_to_decimal(self.config.margin)),
@@ -717,7 +712,6 @@ impl<'a> Bot<'a> {
         }
 
         let roi = Helper::calc_roi(
-            &mut Helper::from_config(),
             self.open_pos
                 .margin
                 .unwrap_or(Helper::f64_to_decimal(self.config.margin)),
