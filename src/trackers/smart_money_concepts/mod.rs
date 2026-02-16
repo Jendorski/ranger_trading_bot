@@ -762,7 +762,7 @@ async fn smc_main(conn: &mut redis::aio::MultiplexedConnection, timeframe: Strin
     }
 
     let zones = Zones {
-        long_zones: Vec::new(),
+        long_zones,
         short_zones,
     };
 
