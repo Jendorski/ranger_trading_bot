@@ -29,9 +29,6 @@ struct InputCandle {
     volume: f64,
 }
 
-// pub const TRADING_SCALPER_BOT_ACTIVE: &str = "trading_scalper_bot::active";
-// pub const TRADIN_SCALPER_BOT_POSITION: &str = "trading_scalper_bot::position";
-// pub const SCALPER_CLOSED_POSITIONS: &str = "scalper_closed_positions";
 pub const TRADING_BOT_ZONES: &str = "trading_bot:zones";
 pub const TRADING_BOT_POSITION: &str = "trading_bot:position";
 pub const TRADING_BOT_ACTIVE: &str = "trading::active";
@@ -39,16 +36,20 @@ pub const TRADING_BOT_CLOSE_POSITIONS: &str = "closed_positions";
 pub const TRADING_CAPITAL: &str = "trading_capital";
 pub const TRADING_PARTIAL_PROFIT_TARGET: &str = "trading_partial_profit_target";
 pub const TRADING_BOT_LOSS_COUNT: &str = "trading_bot:loss_count";
+
+// Legacy constants retained to avoid breaking unused imports in other modules (marked for future cleanup)
+#[allow(dead_code)]
 pub const TRADING_BOT_SMART_MONEY_CONCEPTS_NEXT_CALL: &str =
     "trading_bot:smart_money_concepts_next_call";
+#[allow(dead_code)]
 pub const TRADING_BOT_RECOMMENDED_CALL: &str = "trading_bot:recommended_call";
-pub const WEEKLY_CANDLES: &'static str = "weekly_candles";
-pub const WEEKLY_ICHIMOKU: &'static str = "weekly_ichimoku";
-pub const LAST_25_WEEKLY_ICHIMOKU_SPANS: &'static str = "last_25_weekly_ichimoku_spans";
-pub const CAPITULATION_PHASE_CLOSED_POSITIONS: &str = "capitulation_phase_closed_positions";
-pub const CAPITULATION_PHASE_STATE: &str = "capitulation_phase_state";
+
+pub const WEEKLY_CANDLES: &str = "weekly_candles";
+pub const WEEKLY_ICHIMOKU: &str = "weekly_ichimoku";
+pub const LAST_25_WEEKLY_ICHIMOKU_SPANS: &str = "last_25_weekly_ichimoku_spans";
 
 pub struct Helper {
+    #[allow(dead_code)]
     pub config: Config,
 }
 
@@ -80,6 +81,7 @@ impl fmt::Display for PartialProfitTarget {
 }
 
 impl Helper {
+    #[allow(dead_code)]
     pub fn from_config() -> Helper {
         let config = Config::from_env().expect("NO CONFIGURATION");
         Self { config }
@@ -116,7 +118,7 @@ impl Helper {
             return pnl_diff * pos_size;
         }
 
-        return dec!(0.00);
+        dec!(0.00)
     }
 
     pub fn position_size(margin: Decimal, leverage: Decimal) -> Decimal {
@@ -124,7 +126,6 @@ impl Helper {
     }
 
     pub fn calc_roi(
-        &mut self,
         margin: Decimal,
         entry_price: Decimal,
         pos: Position,
@@ -149,9 +150,8 @@ impl Helper {
         if entry_price.is_zero() {
             return dec!(0.00);
         }
-        let btc_amount = position_size / entry_price;
 
-        btc_amount
+        position_size / entry_price
     }
 
     /// Returns **true** iff the supplied `DateTime<Utc>` is exactly midnight (00:00).
@@ -188,7 +188,7 @@ impl Helper {
         let pl = pl_diff / entry;
 
         //Wondering why I added leverage here in the first place
-        return pl * 100.00; //leverage *
+        pl * 100.00 //leverage *
     }
 
     pub fn truncate_to_1_dp(val: f64) -> f64 {
@@ -239,7 +239,7 @@ impl Helper {
         tp_counts: usize,
         pos: Position,
     ) -> Vec<Decimal> {
-        let ranger_price_difference = ranger_price_difference;
+        let _ranger_price_difference = ranger_price_difference;
 
         let mut count = 0;
         let mut tp = entry_price;
@@ -351,7 +351,7 @@ impl Helper {
     }
 
     pub fn extract_into_weekly_candle(path: &str, output_path: &str) -> Result<()> {
-        println!("Reading {}...", path);
+        println!("Reading {path}...");
         if !Path::new(path).exists() {
             return Err(anyhow!("File {} not found", path));
         }
@@ -450,7 +450,7 @@ impl Helper {
             "Resampling to weekly... ({} weeks found)",
             weekly_data.len()
         );
-        println!("Saving to {}...", output_path);
+        println!("Saving to {output_path}...");
 
         let output_file = File::create(output_path)?;
         let mut wtr = csv::Writer::from_writer(output_file);
@@ -492,8 +492,7 @@ mod tests {
 
     #[test]
     fn test_calc_roi_zero_margin() {
-        let mut helper = Helper::from_config();
-        let roi = helper.calc_roi(
+        let roi = Helper::calc_roi(
             dec!(0.00),
             dec!(50000.0),
             Position::Long,

@@ -239,21 +239,11 @@ impl ZoneId {
    Zone Guard
 ======================= */
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ZoneStats {
     pub consecutive_losses: u8,
     pub disabled: bool,
     pub cooldown_until: Option<u64>, // unix timestamp
-}
-
-impl Default for ZoneStats {
-    fn default() -> Self {
-        Self {
-            consecutive_losses: 0,
-            disabled: false,
-            cooldown_until: None,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -285,6 +275,7 @@ impl ZoneGuard {
             .as_secs()
     }
 
+    #[allow(dead_code)]
     pub fn can_trade(&self, zone_id: ZoneId) -> bool {
         self.zones
             .get(&zone_id)
@@ -301,7 +292,7 @@ impl ZoneGuard {
             cooldown_until: None,
         });
 
-        return stats;
+        stats
     }
 
     pub async fn record_trade_result(&mut self, zone_id: ZoneId, pnl: f64) {

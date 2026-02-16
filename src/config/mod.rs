@@ -16,7 +16,7 @@ pub struct Config {
     pub symbol: String,
 
     /// Polling interval in seconds
-    #[serde(default = "default_interval")]
+    #[allow(dead_code)]
     pub poll_interval_secs: u64,
 
     pub redis_url: String,
@@ -37,8 +37,13 @@ pub struct Config {
 
     pub use_smc_indicator: bool,
     pub use_ichimoku_indicator: bool,
+
+    pub smc_zone_multiplier: f64,
+    pub smc_min_distance: f64,
+    pub smc_loop_interval: u64,
 }
 
+#[allow(dead_code)]
 fn default_interval() -> u64 {
     5
 }
@@ -112,6 +117,21 @@ impl Config {
             .parse::<bool>()
             .map_err(|_| anyhow!("USE_ICHIMOKU_INDICATOR must be 'true' or 'false'"))?;
 
+        let smc_zone_multiplier = env::var("SMC_ZONE_MULTIPLIER")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.00075);
+
+        let smc_min_distance = env::var("SMC_MIN_DISTANCE")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(1500.0);
+
+        let smc_loop_interval = env::var("SMC_LOOP_INTERVAL")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(1800);
+
         Ok(Config {
             api_key,
             api_secret,
@@ -130,6 +150,9 @@ impl Config {
             smc_candle_count,
             use_smc_indicator,
             use_ichimoku_indicator,
+            smc_zone_multiplier,
+            smc_min_distance,
+            smc_loop_interval,
         })
     }
 }

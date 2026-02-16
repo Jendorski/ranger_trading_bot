@@ -31,7 +31,6 @@ use futures_util::StreamExt;
 
 //pub mod scalper;
 
-pub mod capitulation_phase;
 pub mod zones;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,7 +121,7 @@ impl OpenPosition {
         conn: &mut redis::aio::MultiplexedConnection,
         //id: Uuid,
     ) -> Result<OpenPosition> {
-        let key = format!("trading::active",);
+        let key = "trading::active".to_string();
 
         let open_pos: String = conn.get(key).await?;
 
@@ -131,7 +130,7 @@ impl OpenPosition {
 
     async fn store_open_position(
         mut conn: redis::aio::MultiplexedConnection,
-        open_pos: OpenPosition,
+        open_pos: &OpenPosition,
     ) -> Result<()> {
         let key = TRADING_BOT_ACTIVE;
 
@@ -169,9 +168,6 @@ pub struct Bot<'a> {
     zone_guard: ZoneGuard,
 
     macro_guard: MacroGuard,
-
-    pub capitulation_state: capitulation_phase::CapitulationState,
-    pub capitulation_strategy: capitulation_phase::CapitulationStrategy,
 }
 
 impl<'a> Bot<'a> {
@@ -181,7 +177,7 @@ impl<'a> Bot<'a> {
     ) -> Result<Self> {
         let pos: Position = Self::load_position(&mut conn)
             .await
-            .unwrap_or_else(|_| Position::Flat);
+            .unwrap_or(Position::Flat);
 
         let zones: Zones = Self::load_zones(&mut conn)
             .await
@@ -197,7 +193,7 @@ impl<'a> Bot<'a> {
             .await
             .unwrap_or_else(|_| [].to_vec());
 
-        let loss_count = Self::load_loss_count(&mut conn).await.unwrap_or_else(|_| 0);
+        let loss_count = Self::load_loss_count(&mut conn).await.unwrap_or(0);
 
         //let smc = SmcEngine::new(3, 3);
 
@@ -206,11 +202,6 @@ impl<'a> Bot<'a> {
         let zone_guard = ZoneGuard::new(2, conn.clone(), 60 * 60 * 8);
 
         let macro_guard = MacroGuard::new(&mut conn.clone()).await?;
-
-        let capitulation_state = capitulation_phase::CapitulationState::load_state(&mut conn)
-            .await
-            .unwrap_or_else(|_| capitulation_phase::CapitulationState::default());
-        let capitulation_strategy = capitulation_phase::CapitulationStrategy::new();
 
         Ok(Self {
             open_pos,
@@ -224,8 +215,6 @@ impl<'a> Bot<'a> {
             fees,
             zone_guard,
             macro_guard,
-            capitulation_state,
-            capitulation_strategy,
         })
     }
 
@@ -233,7 +222,7 @@ impl<'a> Bot<'a> {
         let opt: Option<String> = conn.get(TRADING_BOT_LOSS_COUNT).await?;
 
         let u = serde_json::from_str::<usize>(&opt.unwrap_or("0".to_string()));
-        Ok(u.unwrap_or_else(|_| 0))
+        Ok(u.unwrap_or(0))
     }
 
     async fn load_partial_profit_target(
@@ -263,7 +252,7 @@ impl<'a> Bot<'a> {
         })
     }
 
-    async fn store_position(&mut self, pos: Position, open_pos: OpenPosition) -> Result<()> {
+    async fn store_position(&mut self, pos: Position, open_pos: &OpenPosition) -> Result<()> {
         let _: () = self
             .redis_conn
             .set(TRADING_BOT_POSITION, pos.as_str())
@@ -320,8 +309,8 @@ impl<'a> Bot<'a> {
             .await;
         OpenPosition {
             id: Uuid::new_v4(),
-            pos: pos,
-            entry_price: entry_price,
+            pos,
+            entry_price,
             position_size: qty, //does the same thing as quantity :(
             entry_time: Utc::now(),
             tp: Some(tp),
@@ -345,7 +334,6 @@ impl<'a> Bot<'a> {
     pub async fn close_long_position(&mut self, price: Decimal) -> Result<()> {
         let dec_config_margin = Helper::f64_to_decimal(self.config.margin);
         let roi = Helper::calc_roi(
-            &mut Helper::from_config(),
             self.open_pos.margin.unwrap_or(dec_config_margin),
             self.open_pos.entry_price,
             self.pos,
@@ -359,10 +347,7 @@ impl<'a> Bot<'a> {
             price,
         );
 
-        let (pnl_after_fees, exit_fee) = self
-            .fees
-            .calc_pnl_for_exit(self.open_pos.clone(), price)
-            .await;
+        let (pnl_after_fees, exit_fee) = self.fees.calc_pnl_for_exit(&self.open_pos, price).await;
         let closed_pos = ClosedPosition {
             id: self.open_pos.id,
             entry_price: self.open_pos.entry_price,
@@ -397,13 +382,12 @@ impl<'a> Bot<'a> {
                 .iter()
                 .find(|z| z.contains(Helper::decimal_to_f64(self.open_pos.entry_price)));
 
-            if !zone.is_none() {
+            if let Some(zone) = zone {
                 warn!(
                     "Losing zone found for price: {}; zone: {:?}",
-                    self.open_pos.entry_price,
-                    zone.unwrap()
+                    self.open_pos.entry_price, zone
                 );
-                let zone_id = ZoneId::from_zone(zone.unwrap());
+                let zone_id = ZoneId::from_zone(zone);
                 self.zone_guard
                     .record_trade_result(zone_id, Helper::decimal_to_f64(pnl_after_fees))
                     .await;
@@ -426,7 +410,7 @@ impl<'a> Bot<'a> {
                 .set_ex::<_, _, ()>(TRADING_BOT_LOSS_COUNT, self.loss_count, 43200) //12hours reset
                 .await
             {
-                warn!("Failed to store loss count: {}", e);
+                warn!("Failed to store loss count: {e}");
             }
         }
         Ok(())
@@ -448,24 +432,24 @@ impl<'a> Bot<'a> {
         };
 
         if margin <= dec!(5.00) {
-            warn!("margin as we know it, is rekt, {:2}", margin);
+            warn!("margin as we know it, is rekt, {margin:2}");
             margin = Helper::f64_to_decimal(config.margin);
             return margin;
         }
 
-        return margin;
+        margin
     }
 
     pub async fn prepare_current_margin(&mut self, pnl: Decimal) -> Decimal {
         let mut current_margin = Self::load_current_margin(&mut self.redis_conn, self.config).await;
-        info!("redis_current_margin: {:?}", current_margin);
-        info!("prepare_current_margin pnl: {:?}", pnl);
+        info!("redis_current_margin: {current_margin:?}");
+        info!("prepare_current_margin pnl: {pnl:?}");
 
         current_margin += pnl;
-        info!("current_margin, {:2}", current_margin);
+        info!("current_margin, {current_margin:2}");
 
         if current_margin <= dec!(5.00) {
-            warn!("current_margin is rekt, {:2}", current_margin);
+            warn!("current_margin is rekt, {current_margin:2}");
             current_margin = Helper::f64_to_decimal(self.config.margin);
             self.open_pos.margin = Some(current_margin);
         }
@@ -473,10 +457,9 @@ impl<'a> Bot<'a> {
         self.current_margin = current_margin;
 
         let _ = Self::store_current_margin(current_margin, &mut self.redis_conn).await;
-        let _ =
-            OpenPosition::store_open_position(self.redis_conn.clone(), self.open_pos.clone()).await;
+        let _ = OpenPosition::store_open_position(self.redis_conn.clone(), &self.open_pos).await;
 
-        return current_margin;
+        current_margin
     }
 
     async fn store_current_margin(
@@ -497,16 +480,11 @@ impl<'a> Bot<'a> {
             self.open_pos.position_size,
             price,
         );
-        let (pnl_after_fees, exit_fee) = self
-            .fees
-            .calc_pnl_for_exit(self.open_pos.clone(), price)
-            .await;
+        let (pnl_after_fees, exit_fee) = self.fees.calc_pnl_for_exit(&self.open_pos, price).await;
         info!(
-            "close_short_position: pnl, pnl_after_fees, exit_fees -> {:?}, {:?}, {:?}",
-            pnl, pnl_after_fees, exit_fee
+            "close_short_position: pnl, pnl_after_fees, exit_fees -> {pnl:?}, {pnl_after_fees:?}, {exit_fee:?}"
         );
         let roi = Helper::calc_roi(
-            &mut Helper::from_config(),
             self.open_pos
                 .margin
                 .unwrap_or(Helper::f64_to_decimal(self.config.margin)),
@@ -549,13 +527,12 @@ impl<'a> Bot<'a> {
                 .iter()
                 .find(|z| z.contains(Helper::decimal_to_f64(self.open_pos.entry_price)));
 
-            if !zone.is_none() {
+            if let Some(zone) = zone {
                 warn!(
                     "Losing zone found for price: {}; zone: {:?}",
-                    self.open_pos.entry_price,
-                    zone.unwrap()
+                    self.open_pos.entry_price, zone
                 );
-                let zone_id = ZoneId::from_zone(zone.unwrap());
+                let zone_id = ZoneId::from_zone(zone);
                 self.zone_guard
                     .record_trade_result(zone_id, Helper::decimal_to_f64(pnl_after_fees))
                     .await;
@@ -574,14 +551,13 @@ impl<'a> Bot<'a> {
         price: Decimal,
         exchange: &dyn Exchange,
     ) -> Result<()> {
-        info!("Ranger Taking profit on LONG at {:.2}", price);
+        info!("Ranger Taking profit on LONG at {price:.2}");
 
         self.open_pos.tp = Some(price);
 
-        let exec_price: PlaceOrderData =
-            exchange.modify_market_order(self.open_pos.clone()).await?;
+        let exec_price: PlaceOrderData = exchange.modify_market_order(&self.open_pos).await?;
 
-        info!("Ranger Closed LONG at {:?}", exec_price);
+        info!("Ranger Closed LONG at {exec_price:?}");
 
         let _: () = Self::close_long_position(self, price).await?;
 
@@ -606,7 +582,7 @@ impl<'a> Bot<'a> {
             let _: () = Self::close_long_position(self, dec_price).await?;
         }
 
-        if self.partial_profit_target.len() == 0 {
+        if self.partial_profit_target.is_empty() {
             info!(
                 "ALL TARGETS HIT FOR LONG!: {:?}",
                 self.partial_profit_target
@@ -624,7 +600,6 @@ impl<'a> Bot<'a> {
         }
 
         let roi = Helper::calc_roi(
-            &mut Helper::from_config(),
             self.open_pos
                 .margin
                 .unwrap_or(Helper::f64_to_decimal(self.config.margin)),
@@ -653,15 +628,13 @@ impl<'a> Bot<'a> {
 
         let (pnl_after_fees, exit_fee) = self
             .fees
-            .calc_pnl_for_exit(modified_open_pos.clone(), dec_price)
+            .calc_pnl_for_exit(&modified_open_pos, dec_price)
             .await;
 
         //Exchange call to take profit
         //self.open_pos.tp = Some(dec_price);
-        let exec_price: PlaceOrderData = exchange
-            .modify_market_order(modified_open_pos.clone())
-            .await?;
-        info!("exec_price: {:?}", exec_price);
+        let exec_price: PlaceOrderData = exchange.modify_market_order(&modified_open_pos).await?;
+        info!("exec_price: {exec_price:?}");
 
         let closed_pos = ClosedPosition {
             id: self.open_pos.id,
@@ -702,7 +675,8 @@ impl<'a> Bot<'a> {
         };
 
         warn!("NEW SL for LONG is: {:?}", target.sl);
-        self.store_position(self.pos, self.open_pos.clone()).await?;
+        self.store_position(self.pos, &self.open_pos.clone())
+            .await?;
         Ok(())
     }
 
@@ -720,7 +694,7 @@ impl<'a> Bot<'a> {
             let _: () = Self::close_short_position(self, dec_price).await?;
         }
 
-        if self.partial_profit_target.len() == 0 {
+        if self.partial_profit_target.is_empty() {
             info!(
                 "ALL TARGETS HIT FOR SHORT!: {:?}",
                 self.partial_profit_target
@@ -738,7 +712,6 @@ impl<'a> Bot<'a> {
         }
 
         let roi = Helper::calc_roi(
-            &mut Helper::from_config(),
             self.open_pos
                 .margin
                 .unwrap_or(Helper::f64_to_decimal(self.config.margin)),
@@ -767,14 +740,12 @@ impl<'a> Bot<'a> {
 
         let (pnl_after_fees, exit_fee) = self
             .fees
-            .calc_pnl_for_exit(modified_open_pos.clone(), dec_price)
+            .calc_pnl_for_exit(&modified_open_pos, dec_price)
             .await;
 
         //Exchange call to take profit
         //self.open_pos.tp = Some(dec_price);
-        let exec_price: PlaceOrderData = exchange
-            .modify_market_order(modified_open_pos.clone())
-            .await?;
+        let exec_price: PlaceOrderData = exchange.modify_market_order(&modified_open_pos).await?;
 
         let closed_pos = ClosedPosition {
             id: self.open_pos.id,
@@ -813,7 +784,8 @@ impl<'a> Bot<'a> {
             risk_pct: self.open_pos.risk_pct,
             order_id: self.open_pos.order_id.clone(),
         };
-        self.store_position(self.pos, self.open_pos.clone()).await?;
+        self.store_position(self.pos, &self.open_pos.clone())
+            .await?;
 
         warn!("NEW SL for SHORT is: {:?}", target.sl);
 
@@ -826,15 +798,14 @@ impl<'a> Bot<'a> {
         price: f64,
         exchange: &dyn Exchange,
     ) -> Result<()> {
-        info!("Ranger Covering SHORT at {:.2}", price);
+        info!("Ranger Covering SHORT at {price:.2}");
         let dec_price = Helper::f64_to_decimal(price);
 
         self.open_pos.tp = Some(dec_price);
 
-        let exec_price: PlaceOrderData =
-            exchange.modify_market_order(self.open_pos.clone()).await?;
+        let exec_price: PlaceOrderData = exchange.modify_market_order(&self.open_pos).await?;
 
-        info!("Ranger Covered SHORT at {:?}", exec_price);
+        info!("Ranger Covered SHORT at {exec_price:?}");
 
         let _: () = Self::close_short_position(self, dec_price).await?;
 
@@ -904,7 +875,7 @@ impl<'a> Bot<'a> {
             return entry_price - the_zone.high;
         }
 
-        return 0.00;
+        0.00
     }
 
     async fn store_partial_profit_targets(
@@ -956,7 +927,7 @@ impl<'a> Bot<'a> {
         price: f64,
         exchange: &dyn Exchange,
     ) -> Result<()> {
-        if self.partial_profit_target.len() == 0 {
+        if self.partial_profit_target.is_empty() {
             info!(
                 "ALL TARGETS HIT FOR LONG!: {:?}",
                 self.partial_profit_target
@@ -1012,7 +983,7 @@ impl<'a> Bot<'a> {
         price: f64,
         exchange: &dyn Exchange,
     ) -> Result<()> {
-        if self.partial_profit_target.len() == 0 {
+        if self.partial_profit_target.is_empty() {
             info!(
                 "ALL TARGETS HIT FOR SHORT!: {:?}",
                 self.partial_profit_target
@@ -1034,7 +1005,7 @@ impl<'a> Bot<'a> {
         }
 
         let target = self.partial_profit_target[idx].clone();
-        info!("target: {:?}", target);
+        info!("target: {target:?}");
 
         if target.target_price.is_zero() || target.target_price.is_sign_negative() {
             return Ok(());
@@ -1063,14 +1034,14 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
-    pub async fn test(&mut self, exchange: &dyn Exchange) -> Result<()> {
-        Ok(())
-    }
+    // pub async fn test(&mut self, exchange: &dyn Exchange) -> Result<()> {
+    //     Ok(())
+    // }
 
     async fn run_cycle(&mut self, price: f64, exchange: &dyn Exchange) -> Result<()> {
         let dec_price = Decimal::from_f64(price).unwrap();
         if price == 1.11 {
-            warn!("Price failure! -> {:?}", price);
+            warn!("Price failure! -> {price:?}");
             return Ok(());
         }
 
@@ -1104,11 +1075,11 @@ impl<'a> Bot<'a> {
                     let zone_id = ZoneId::from_zone(zone);
                     let z_guard_trade_result = self.zone_guard.get_trade_result(zone_id).await;
                     if z_guard_trade_result.disabled {
-                        warn!("Zone {:?} is not open for trading", zone);
+                        warn!("Zone {zone:?} is not open for trading");
                         return Ok(());
                     }
 
-                    info!("Ranger Entering LONG at {:.2} in zone {:?}", price, zone);
+                    info!("Ranger Entering LONG at {price:.2} in zone {zone:?}");
                     let _: () = Self::delete_partial_profit_target(self).await?;
 
                     self.pos = Position::Long;
@@ -1116,8 +1087,7 @@ impl<'a> Bot<'a> {
                     let funding_rate = exchange.get_funding_rate().await.unwrap_or(0.0);
                     let funding_multiplier = Helper::funding_multiplier(funding_rate, self.pos);
                     info!(
-                        "Funding-aware sizing: rate={:.6}, multiplier={:.2}",
-                        funding_rate, funding_multiplier
+                        "Funding-aware sizing: rate={funding_rate:.6}, multiplier={funding_multiplier:.2}"
                     );
 
                     let _: Result<()> =
@@ -1134,8 +1104,8 @@ impl<'a> Bot<'a> {
                     .await;
 
                     let exec_price: PlaceOrderData =
-                        exchange.place_market_order(self.open_pos.clone()).await?;
-                    info!("Ranger Long executed at {:?}", exec_price);
+                        exchange.place_market_order(&self.open_pos).await?;
+                    info!("Ranger Long executed at {exec_price:?}");
 
                     if exec_price.client_oid == "Failed to place order" {
                         warn!("Failed to place order");
@@ -1154,11 +1124,11 @@ impl<'a> Bot<'a> {
                     let z_guard_trade_result = self.zone_guard.get_trade_result(zone_id).await;
 
                     if z_guard_trade_result.disabled {
-                        warn!("{:?} is not open for trading", zone);
+                        warn!("{zone:?} is not open for trading");
                         return Ok(());
                     }
 
-                    info!("Ranger Entering SHORT at {:.2} in zone {:?}", price, zone);
+                    info!("Ranger Entering SHORT at {price:.2} in zone {zone:?}");
                     let _: () = Self::delete_partial_profit_target(self).await?;
 
                     self.pos = Position::Short;
@@ -1166,8 +1136,7 @@ impl<'a> Bot<'a> {
                     let funding_rate = exchange.get_funding_rate().await.unwrap_or(0.0);
                     let funding_multiplier = Helper::funding_multiplier(funding_rate, self.pos);
                     info!(
-                        "Funding-aware sizing: rate={:.6}, multiplier={:.2}",
-                        funding_rate, funding_multiplier
+                        "Funding-aware sizing: rate={funding_rate:.6}, multiplier={funding_multiplier:.2}"
                     );
 
                     let _: Result<()> =
@@ -1184,8 +1153,8 @@ impl<'a> Bot<'a> {
                     .await;
 
                     let exec_price: PlaceOrderData =
-                        exchange.place_market_order(self.open_pos.clone()).await?;
-                    info!("Ranger Short executed at {:?}", exec_price);
+                        exchange.place_market_order(&self.open_pos).await?;
+                    info!("Ranger Short executed at {exec_price:?}");
 
                     if exec_price.client_oid == "Failed to place order" {
                         warn!("Failed to place order");
@@ -1194,7 +1163,7 @@ impl<'a> Bot<'a> {
                     self.open_pos.order_id = Some(exec_price.order_id);
                 } else {
                     //Track for new zone targets
-                    warn!("Price {:.2} out of any Ranger zone -- staying flat", price);
+                    warn!("Price {price:.2} out of any Ranger zone -- staying flat");
                 }
             }
 
@@ -1227,7 +1196,7 @@ impl<'a> Bot<'a> {
                 }
 
                 //Take partial profit if we hit a target
-                if self.partial_profit_target.len() > 0
+                if !self.partial_profit_target.is_empty()
                     && self
                         .partial_profit_target
                         .iter()
@@ -1266,7 +1235,7 @@ impl<'a> Bot<'a> {
                 }
 
                 //Take partial profit if we hit a target
-                if self.partial_profit_target.len() > 0
+                if !self.partial_profit_target.is_empty()
                     && self
                         .partial_profit_target
                         .iter()
@@ -1276,29 +1245,30 @@ impl<'a> Bot<'a> {
                 }
             }
         }
-        self.store_position(self.pos, self.open_pos.clone()).await?;
+        let pos_snapshot = self.open_pos.clone();
+        self.store_position(self.pos, &pos_snapshot).await?;
         Ok(())
     }
 
-    async fn run_capitulation_cycle(&mut self, price: f64, exchange: &dyn Exchange) -> Result<()> {
-        let dec_price = Decimal::from_f64(price).unwrap();
+    // async fn run_capitulation_cycle(&mut self, price: f64, exchange: &dyn Exchange) -> Result<()> {
+    //     let dec_price = Decimal::from_f64(price).unwrap();
 
-        // --- Capitulation Phase Strategy ---
-        if let Err(e) = self
-            .capitulation_strategy
-            .run_cycle(
-                &mut self.capitulation_state,
-                dec_price,
-                exchange,
-                &mut self.redis_conn,
-            )
-            .await
-        {
-            log::error!("Capitulation strategy error: {}", e);
-        }
+    //     // --- Capitulation Phase Strategy ---
+    //     if let Err(e) = self
+    //         .capitulation_strategy
+    //         .run_cycle(
+    //             &mut self.capitulation_state,
+    //             dec_price,
+    //             exchange,
+    //             &mut self.redis_conn,
+    //         )
+    //         .await
+    //     {
+    //         log::error!("Capitulation strategy error: {}", e);
+    //     }
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     pub async fn start_live_trading(&mut self, exchange: &dyn Exchange) -> Result<()> {
         let mut backoff_secs = 1;
@@ -1324,7 +1294,7 @@ impl<'a> Bot<'a> {
                                 let price: f64 = ticker.last_pr.parse().unwrap_or(0.0);
 
                                 if price > 0.0 {
-                                    info!("Ticker Price = {:.2}", price);
+                                    info!("Ticker Price = {price:.2}");
 
                                     // Run Capitulation Strategy Independently
                                     // if let Err(e) =
@@ -1335,7 +1305,7 @@ impl<'a> Bot<'a> {
 
                                     // Run Main Ranger Strategy
                                     if let Err(e) = self.run_cycle(price, exchange).await {
-                                        log::error!("Error during trading cycle: {}", e);
+                                        log::error!("Error during trading cycle: {e}");
                                     }
                                 }
 
@@ -1350,13 +1320,13 @@ impl<'a> Bot<'a> {
                                     )
                                     .await
                                     {
-                                        log::error!("Failed to process cumulative stats: {}", e);
+                                        log::error!("Failed to process cumulative stats: {e}");
                                     }
                                     last_midnight_check = Utc::now();
                                 }
                             }
                             std::result::Result::Err(e) => {
-                                log::error!("WebSocket ticker stream error: {}", e);
+                                log::error!("WebSocket ticker stream error: {e}");
                                 break; // Break the inner loop to trigger reconnection
                             }
                         }
@@ -1365,9 +1335,7 @@ impl<'a> Bot<'a> {
                 }
                 std::result::Result::Err(e) => {
                     log::error!(
-                        "Failed to subscribe to tickers: {}. Retrying in {}s...",
-                        e,
-                        backoff_secs
+                        "Failed to subscribe to tickers: {e}. Retrying in {backoff_secs}s..."
                     );
                 }
             }

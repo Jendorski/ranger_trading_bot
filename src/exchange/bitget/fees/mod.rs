@@ -1,7 +1,6 @@
 use redis::AsyncCommands;
 use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
-use rust_decimal_macros::dec;
 use serde::{Deserialize, Serialize};
 
 use crate::bot::{OpenPosition, Position};
@@ -10,20 +9,24 @@ use crate::helper::Helper;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ExecutionType {
+    #[allow(dead_code)]
     Maker,
     Taker,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum ExitReason {
-    TakeProfit,
-    StopLoss,
-}
+// #[derive(Debug, Clone, Copy)]
+// pub enum ExitReason {
+//     TakeProfit,
+//     StopLoss,
+// }
 
 #[derive(Debug, Clone)]
 pub struct BitgetFuturesFees {
+    #[allow(dead_code)]
     pub maker_fee: f64, // 0.02%
+    #[allow(dead_code)]
     pub taker_fee: f64, // 0.06%
+    #[allow(dead_code)]
     pub funding_rate: f64,
     pub redis_conn: redis::aio::MultiplexedConnection,
 }
@@ -52,6 +55,7 @@ impl BitgetFuturesFees {
         }
     }
 
+    #[allow(dead_code)]
     pub fn from_vip_data(conn: redis::aio::MultiplexedConnection, vip_data: &VipFeeRate) -> Self {
         Self {
             maker_fee: vip_data.maker_fee_rate,
@@ -61,6 +65,7 @@ impl BitgetFuturesFees {
         }
     }
 
+    #[allow(dead_code)]
     pub fn for_level(self, level: &str, rates: &[VipFeeRate]) -> Option<Self> {
         rates
             .iter()
@@ -128,7 +133,7 @@ impl BitgetFuturesFees {
 
     pub async fn calc_pnl_for_exit(
         &self,
-        open_position: OpenPosition,
+        open_position: &OpenPosition,
         current_price: Decimal,
     ) -> (Decimal, Decimal) {
         let exit_fee = self
