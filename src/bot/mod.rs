@@ -633,8 +633,8 @@ impl<'a> Bot<'a> {
 
         //Exchange call to take profit
         //self.open_pos.tp = Some(dec_price);
-        let exec_price: PlaceOrderData = exchange.modify_market_order(&modified_open_pos).await?;
-        info!("exec_price: {exec_price:?}");
+        // let exec_price: PlaceOrderData = exchange.modify_market_order(&modified_open_pos).await?;
+        // info!("exec_price: {exec_price:?}");
 
         let closed_pos = ClosedPosition {
             id: self.open_pos.id,
@@ -671,7 +671,7 @@ impl<'a> Bot<'a> {
             quantity: Some(remaining_size),
             leverage: self.open_pos.leverage,
             risk_pct: self.open_pos.risk_pct,
-            order_id: Some(exec_price.order_id),
+            order_id: Some(String::new()), //Some(exec_price.order_id),
         };
 
         warn!("NEW SL for LONG is: {:?}", target.sl);
@@ -745,7 +745,8 @@ impl<'a> Bot<'a> {
 
         //Exchange call to take profit
         //self.open_pos.tp = Some(dec_price);
-        let exec_price: PlaceOrderData = exchange.modify_market_order(&modified_open_pos).await?;
+        // let exec_price: PlaceOrderData = exchange.modify_market_order(&modified_open_pos).await?;
+        // info!("exec_price: {exec_price:?}");
 
         let closed_pos = ClosedPosition {
             id: self.open_pos.id,
@@ -761,7 +762,7 @@ impl<'a> Bot<'a> {
             roi: Some(roi),
             leverage: self.open_pos.leverage,
             margin: self.open_pos.margin,
-            order_id: Some(exec_price.order_id),
+            order_id: Some(String::new()), //Some(exec_price.order_id),
             pnl_after_fees: Some(pnl_after_fees),
             exit_fee: Some(exit_fee),
         };
