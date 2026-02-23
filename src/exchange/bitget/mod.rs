@@ -28,7 +28,7 @@ pub struct ApiResponse<T> {
     pub msg: String,
     #[serde(rename = "requestTime")]
     pub request_time: i64,
-    pub data: T,
+    pub data: Option<T>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -210,7 +210,9 @@ impl CandleData for HttpCandleData {
         }
         // assert_eq!(response.data.len(), limit.parse::<usize>().unwrap());
 
-        let candles = response.data;
+        let candles = response.data.ok_or_else(|| {
+            anyhow::anyhow!("Bitget returned ok code but null data in candles response")
+        })?;
 
         Ok(candles)
     }
@@ -229,7 +231,9 @@ impl CandleData for HttpCandleData {
             return Err(anyhow::anyhow!("Bitget API error: {}", api_response.msg));
         }
 
-        Ok(api_response.data)
+        Ok(api_response.data.ok_or_else(|| {
+            anyhow::anyhow!("Bitget returned ok code but null data in funding-rate response")
+        })?)
     }
 }
 
@@ -318,7 +322,9 @@ impl FuturesCall for HttpCandleData {
             });
         }
 
-        let order_data = response.data;
+        let order_data = response.data.ok_or_else(|| {
+            anyhow::anyhow!("Bitget returned ok code but null data in place-order response")
+        })?;
 
         Ok(order_data)
     }
@@ -404,7 +410,9 @@ impl FuturesCall for HttpCandleData {
             });
         }
 
-        let order = response_json.data;
+        let order = response_json.data.ok_or_else(|| {
+            anyhow::anyhow!("Bitget returned ok code but null data in new-order response")
+        })?;
 
         Ok(order)
     }

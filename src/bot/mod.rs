@@ -633,8 +633,8 @@ impl<'a> Bot<'a> {
 
         //Exchange call to take profit
         //self.open_pos.tp = Some(dec_price);
-        // let exec_price: PlaceOrderData = exchange.modify_market_order(&modified_open_pos).await?;
-        // info!("exec_price: {exec_price:?}");
+        let exec_price: PlaceOrderData = exchange.modify_market_order(&modified_open_pos).await?;
+        info!("exec_price: {exec_price:?}");
 
         let closed_pos = ClosedPosition {
             id: self.open_pos.id,
@@ -671,7 +671,7 @@ impl<'a> Bot<'a> {
             quantity: Some(remaining_size),
             leverage: self.open_pos.leverage,
             risk_pct: self.open_pos.risk_pct,
-            order_id: Some(String::new()), //Some(exec_price.order_id),
+            order_id: Some(exec_price.order_id),
         };
 
         warn!("NEW SL for LONG is: {:?}", target.sl);
@@ -745,8 +745,8 @@ impl<'a> Bot<'a> {
 
         //Exchange call to take profit
         //self.open_pos.tp = Some(dec_price);
-        // let exec_price: PlaceOrderData = exchange.modify_market_order(&modified_open_pos).await?;
-        // info!("exec_price: {exec_price:?}");
+        let exec_price: PlaceOrderData = exchange.modify_market_order(&modified_open_pos).await?;
+        info!("exec_price: {exec_price:?}");
 
         let closed_pos = ClosedPosition {
             id: self.open_pos.id,
@@ -762,7 +762,7 @@ impl<'a> Bot<'a> {
             roi: Some(roi),
             leverage: self.open_pos.leverage,
             margin: self.open_pos.margin,
-            order_id: Some(String::new()), //Some(exec_price.order_id),
+            order_id: Some(exec_price.order_id),
             pnl_after_fees: Some(pnl_after_fees),
             exit_fee: Some(exit_fee),
         };
@@ -1036,6 +1036,30 @@ impl<'a> Bot<'a> {
     }
 
     // pub async fn test(&mut self, exchange: &dyn Exchange) -> Result<()> {
+    //     self.open_pos = OpenPosition {
+    //         id: Uuid::nil(),
+    //         pos: Position::Long,
+    //         entry_price: Decimal::from_f64(65077.5).unwrap(),
+    //         entry_time: Utc::now(),
+    //         position_size: Decimal::from_f64(0.03024824431843623599262351).unwrap(),
+    //         tp: Some(Decimal::from_f64(65974.375).unwrap()),
+    //         sl: Some(Decimal::from_f64(64833.459375).unwrap()),
+    //         margin: Some(Decimal::from_f64(106.00).unwrap()),
+    //         quantity: Some(Decimal::from_f64(0.03024824431843623599262351).unwrap()),
+    //         risk_pct: Some(Decimal::from_f64(0.05).unwrap()),
+    //         leverage: Some(Decimal::from_f64(20.00).unwrap()),
+    //         order_id: Some("".to_string()),
+    //     };
+    //     let price = 65979.6;
+
+    //     self.partial_profit_target = vec![PartialProfitTarget {
+    //         target_price: Decimal::from_f64(65974.375).unwrap(),
+    //         size_btc: Decimal::from_f64(0.00657).unwrap(),
+    //         fraction: Decimal::from_f64(0.20).unwrap(),
+    //         sl: Some(Decimal::from_f64(65525.9375).unwrap()),
+    //     }];
+
+    //     self.evaluate_long_partial_profit(price, exchange).await?;
     //     Ok(())
     // }
 

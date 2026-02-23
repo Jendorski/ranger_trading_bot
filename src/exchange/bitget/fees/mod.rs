@@ -176,11 +176,15 @@ impl BitgetFuturesFees {
             return Err(anyhow::anyhow!("Bitget API error: {}", api_response.msg));
         }
 
+        let rates = api_response.data.ok_or_else(|| {
+            anyhow::anyhow!("Bitget returned ok code but null data in vip-fee-rate response")
+        })?;
+
         // Cache the response
-        if let Ok(json) = serde_json::to_string(&api_response.data) {
+        if let Ok(json) = serde_json::to_string(&rates) {
             let _: () = conn.set_ex(key, json, 86400).await?; // 24 hours
         }
 
-        Ok(api_response.data)
+        Ok(rates)
     }
 }
