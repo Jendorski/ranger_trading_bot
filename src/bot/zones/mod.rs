@@ -319,7 +319,7 @@ impl ZoneGuard {
                 serde_json::to_string(&stats).unwrap(),
                 stats
                     .cooldown_until
-                    .unwrap_or(60 * 60 * 12)
+                    .unwrap_or(60 * 60 * 6)
                     .try_into()
                     .unwrap(),
             )
