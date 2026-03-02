@@ -1098,6 +1098,8 @@ impl<'a> Bot<'a> {
                     .find(|z| price != 1.11 && z.contains(price))
                 {
                     let zone_id = ZoneId::from_zone(zone);
+                    info!("Zone ID: {zone_id:?}");
+
                     let z_guard_trade_result = self.zone_guard.get_trade_result(zone_id).await;
                     if z_guard_trade_result.disabled {
                         warn!("Zone {zone:?} is not open for trading");
@@ -1145,6 +1147,7 @@ impl<'a> Bot<'a> {
                     .find(|z| price != 1.11 && z.contains(price))
                 {
                     let zone_id = ZoneId::from_zone(zone);
+                    info!("Zone ID: {zone_id:?}");
 
                     let z_guard_trade_result = self.zone_guard.get_trade_result(zone_id).await;
 
