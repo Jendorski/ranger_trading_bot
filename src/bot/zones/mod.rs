@@ -312,16 +312,20 @@ impl ZoneGuard {
         } else {
             stats.consecutive_losses = 0;
         }
+        let zone_expiry = stats
+            .cooldown_until
+            .map(|ts| ts.saturating_sub(Self::now()))
+            .unwrap_or(60 * 60 * 6)
+            .try_into()
+            .unwrap();
+        info!("Zone expiry: {zone_expiry}");
+
         let _: () = self
             .redis_conn
             .set_ex(
                 format!("zone_stats::{}", zone_id.0),
                 serde_json::to_string(&stats).unwrap(),
-                stats
-                    .cooldown_until
-                    .unwrap_or(60 * 60 * 6)
-                    .try_into()
-                    .unwrap(),
+                zone_expiry,
             )
             .await
             .unwrap();
