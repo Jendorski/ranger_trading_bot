@@ -1130,6 +1130,12 @@ impl<'a> Bot<'a> {
                     )
                     .await;
 
+                    if 2 + 2 == 4 {
+                        //We are not trading for now.
+                        info!("No trading, for the ranger for now");
+                        return Ok(());
+                    }
+
                     let exec_price: PlaceOrderData =
                         exchange.place_market_order(&self.open_pos).await?;
                     info!("Ranger Long executed at {exec_price:?}");
@@ -1179,6 +1185,12 @@ impl<'a> Bot<'a> {
                         funding_multiplier,
                     )
                     .await;
+
+                    if 2 + 2 == 4 {
+                        //We are not trading for now.
+                        info!("No trading, for the ranger for now");
+                        return Ok(());
+                    }
 
                     let exec_price: PlaceOrderData =
                         exchange.place_market_order(&self.open_pos).await?;
@@ -1323,13 +1335,6 @@ impl<'a> Bot<'a> {
 
                                 if price > 0.0 {
                                     info!("Ticker Price = {price:.2}");
-
-                                    // Run Capitulation Strategy Independently
-                                    // if let Err(e) =
-                                    //     self.run_capitulation_cycle(price, exchange).await
-                                    // {
-                                    //     log::error!("Error during capitulation cycle: {}", e);
-                                    // }
 
                                     // Run Main Ranger Strategy
                                     if let Err(e) = self.run_cycle(price, exchange).await {
