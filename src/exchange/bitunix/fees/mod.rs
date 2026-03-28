@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
 

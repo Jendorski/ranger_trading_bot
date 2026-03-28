@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+#![allow(clippy::uninlined_format_args)]
 use anyhow::Result;
 use chrono::Utc;
 use log::info;

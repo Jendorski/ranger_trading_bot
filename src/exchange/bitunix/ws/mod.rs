@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use log::{error, info};

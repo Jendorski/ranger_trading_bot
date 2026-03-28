@@ -203,7 +203,7 @@ impl<'a> Bot<'a> {
 
         let fees = BitgetFuturesFees::new(conn.clone());
 
-        let zone_guard = ZoneGuard::new(1, conn.clone(), 60 * 60 * 1);
+        let zone_guard = ZoneGuard::new(1, conn.clone(), 60 * 60);
 
         let macro_guard = MacroGuard::new(&mut conn.clone()).await?;
 
