@@ -2,8 +2,31 @@ use anyhow::anyhow;
 use anyhow::Ok;
 use anyhow::Result;
 use std::env;
+use std::str::FromStr;
 
 use serde::Deserialize;
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ExchangeType {
+    Bitget,
+    Bitunix,
+}
+
+impl FromStr for ExchangeType {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s.to_lowercase().as_str() {
+            "bitget" => Ok(ExchangeType::Bitget),
+            "bitunix" => Ok(ExchangeType::Bitunix),
+            other => Err(anyhow!(
+                "Unknown exchange '{}': expected 'bitget' or 'bitunix'",
+                other
+            )),
+        }
+    }
+}
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
@@ -41,6 +64,15 @@ pub struct Config {
     pub smc_zone_multiplier: f64,
     pub smc_min_distance: f64,
     pub smc_loop_interval: u64,
+
+    /// Exchange selector
+    pub exchange: ExchangeType,
+
+    /// Bitunix credentials
+    pub bitunix_api_key: String,
+    pub bitunix_api_secret: String,
+    pub bitunix_maker_fee: f64,
+    pub bitunix_taker_fee: f64,
 }
 
 #[allow(dead_code)]
@@ -132,6 +164,24 @@ impl Config {
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(1800);
 
+        let exchange = env::var("EXCHANGE")
+            .unwrap_or_else(|_| "bitget".into())
+            .parse::<ExchangeType>()
+            .map_err(|e| anyhow!("Invalid EXCHANGE value: {}", e))?;
+
+        let bitunix_api_key =
+            env::var("BITUNIX_API_KEY").map_err(|_| anyhow!("Missing BITUNIX_API_KEY"))?;
+        let bitunix_api_secret =
+            env::var("BITUNIX_API_SECRET").map_err(|_| anyhow!("Missing BITUNIX_API_SECRET"))?;
+        let bitunix_maker_fee = env::var("BITUNIX_MAKER_FEE")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0002);
+        let bitunix_taker_fee = env::var("BITUNIX_TAKER_FEE")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0005);
+
         Ok(Config {
             api_key,
             api_secret,
@@ -153,6 +203,11 @@ impl Config {
             smc_zone_multiplier,
             smc_min_distance,
             smc_loop_interval,
+            exchange,
+            bitunix_api_key,
+            bitunix_api_secret,
+            bitunix_maker_fee,
+            bitunix_taker_fee,
         })
     }
 }
