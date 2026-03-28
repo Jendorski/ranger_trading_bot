@@ -19,6 +19,7 @@ use crate::config::Config;
 use crate::exchange::bitget::fees::BitgetFuturesFees;
 use crate::exchange::bitget::BitgetWsClient;
 use crate::exchange::bitget::PlaceOrderData;
+use crate::exchange::bitunix::ws::BitunixWsClient;
 use crate::exchange::Exchange;
 use crate::graph::Graph;
 use crate::helper::TRADING_BOT_LOSS_COUNT;
@@ -93,6 +94,8 @@ pub struct OpenPosition {
     pub leverage: Option<Decimal>,
     pub risk_pct: Option<Decimal>,
     pub order_id: Option<String>,
+    #[serde(default)]
+    pub position_id: Option<String>,
 }
 
 impl OpenPosition {
@@ -114,6 +117,7 @@ impl OpenPosition {
             risk_pct: Some(dec!(0.05)),
             leverage: Some(dec!(35.00)),
             order_id: Some("".to_string()),
+            position_id: None,
         }
     }
 
@@ -199,7 +203,7 @@ impl<'a> Bot<'a> {
 
         let fees = BitgetFuturesFees::new(conn.clone());
 
-        let zone_guard = ZoneGuard::new(1, conn.clone(), 60 * 60 * 1);
+        let zone_guard = ZoneGuard::new(1, conn.clone(), 60 * 60);
 
         let macro_guard = MacroGuard::new(&mut conn.clone()).await?;
 
@@ -320,6 +324,7 @@ impl<'a> Bot<'a> {
             leverage: Some(leverage),
             risk_pct: Some(risk_pct),
             order_id: Some("".to_string()),
+            position_id: None,
         }
     }
 
@@ -624,6 +629,7 @@ impl<'a> Bot<'a> {
             leverage: self.open_pos.leverage,
             risk_pct: self.open_pos.risk_pct,
             order_id: self.open_pos.order_id.clone(),
+            position_id: self.open_pos.position_id.clone(),
         };
 
         let (pnl_after_fees, exit_fee) = self
@@ -672,6 +678,7 @@ impl<'a> Bot<'a> {
             leverage: self.open_pos.leverage,
             risk_pct: self.open_pos.risk_pct,
             order_id: Some(exec_price.order_id),
+            position_id: self.open_pos.position_id.clone(),
         };
 
         warn!("NEW SL for LONG is: {:?}", target.sl);
@@ -736,6 +743,7 @@ impl<'a> Bot<'a> {
             leverage: self.open_pos.leverage,
             risk_pct: self.open_pos.risk_pct,
             order_id: self.open_pos.order_id.clone(),
+            position_id: self.open_pos.position_id.clone(),
         };
 
         let (pnl_after_fees, exit_fee) = self
@@ -784,6 +792,7 @@ impl<'a> Bot<'a> {
             leverage: self.open_pos.leverage,
             risk_pct: self.open_pos.risk_pct,
             order_id: self.open_pos.order_id.clone(),
+            position_id: self.open_pos.position_id.clone(),
         };
         self.store_position(self.pos, &self.open_pos.clone())
             .await?;
@@ -1130,7 +1139,7 @@ impl<'a> Bot<'a> {
                     )
                     .await;
 
-                    if 2 + 2 == 4 {
+                    if 2 + 2 == 5 {
                         //We are not trading for now.
                         info!("No trading, for the ranger for now");
                         return Ok(());
@@ -1143,6 +1152,15 @@ impl<'a> Bot<'a> {
                     if exec_price.client_oid == "Failed to place order" {
                         warn!("Failed to place order");
                         //return Ok(());
+                    }
+
+                    if let Ok(Some(pos_id)) = exchange.get_position_id().await {
+                        self.open_pos.position_id = Some(pos_id.clone());
+                        let tp = self.open_pos.tp.map(Helper::decimal_to_f64);
+                        let sl = self.open_pos.sl.map(Helper::decimal_to_f64);
+                        if let Err(e) = exchange.place_initial_tpsl(&pos_id, tp, sl).await {
+                            warn!("Failed to place initial TPSL on long: {e}");
+                        }
                     }
 
                     self.open_pos.order_id = Some(exec_price.order_id);
@@ -1186,7 +1204,7 @@ impl<'a> Bot<'a> {
                     )
                     .await;
 
-                    if 2 + 2 == 4 {
+                    if 2 + 2 == 5 {
                         //We are not trading for now.
                         info!("No trading, for the ranger for now");
                         return Ok(());
@@ -1200,6 +1218,16 @@ impl<'a> Bot<'a> {
                         warn!("Failed to place order");
                         //return Ok(());
                     }
+
+                    if let Ok(Some(pos_id)) = exchange.get_position_id().await {
+                        self.open_pos.position_id = Some(pos_id.clone());
+                        let tp = self.open_pos.tp.map(Helper::decimal_to_f64);
+                        let sl = self.open_pos.sl.map(Helper::decimal_to_f64);
+                        if let Err(e) = exchange.place_initial_tpsl(&pos_id, tp, sl).await {
+                            warn!("Failed to place initial TPSL on short: {e}");
+                        }
+                    }
+
                     self.open_pos.order_id = Some(exec_price.order_id);
                 } else {
                     //Track for new zone targets
@@ -1290,26 +1318,6 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
-    // async fn run_capitulation_cycle(&mut self, price: f64, exchange: &dyn Exchange) -> Result<()> {
-    //     let dec_price = Decimal::from_f64(price).unwrap();
-
-    //     // --- Capitulation Phase Strategy ---
-    //     if let Err(e) = self
-    //         .capitulation_strategy
-    //         .run_cycle(
-    //             &mut self.capitulation_state,
-    //             dec_price,
-    //             exchange,
-    //             &mut self.redis_conn,
-    //         )
-    //         .await
-    //     {
-    //         log::error!("Capitulation strategy error: {}", e);
-    //     }
-
-    //     Ok(())
-    // }
-
     pub async fn start_live_trading(&mut self, exchange: &dyn Exchange) -> Result<()> {
         let mut backoff_secs = 1;
         let max_backoff = 64;
@@ -1369,6 +1377,72 @@ impl<'a> Bot<'a> {
                 std::result::Result::Err(e) => {
                     log::error!(
                         "Failed to subscribe to tickers: {e}. Retrying in {backoff_secs}s..."
+                    );
+                }
+            }
+
+            tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+            backoff_secs = std::cmp::min(backoff_secs * 2, max_backoff);
+        }
+    }
+
+    pub async fn start_live_trading_bitunix(&mut self, exchange: &dyn Exchange) -> Result<()> {
+        let mut backoff_secs = 1;
+        let max_backoff = 64;
+
+        loop {
+            info!("Connecting to Bitunix live trading via WebSocket...");
+
+            let ticker_stream_result =
+                BitunixWsClient::subscribe_tickers(&self.config.symbol).await;
+
+            match ticker_stream_result {
+                std::result::Result::Ok(mut ticker_stream) => {
+                    info!("Successfully connected to Bitunix WebSocket");
+                    backoff_secs = 1;
+
+                    let mut graph = Graph::new();
+                    let mut last_midnight_check = Utc::now();
+
+                    while let Some(msg) = ticker_stream.next().await {
+                        match msg {
+                            std::result::Result::Ok(ticker) => {
+                                let price: f64 = ticker.la.parse().unwrap_or(0.0);
+
+                                if price > 0.0 {
+                                    info!("Ticker Price = {price:.2}");
+
+                                    if let Err(e) = self.run_cycle(price, exchange).await {
+                                        log::error!("Error during trading cycle: {e}");
+                                    }
+                                }
+
+                                if Utc::now().date_naive() != last_midnight_check.date_naive()
+                                    && Helper::is_midnight()
+                                {
+                                    warn!("It's midnight now! Processing weekly/monthly stats...");
+                                    if let Err(e) = Graph::prepare_cumulative_weekly_monthly(
+                                        &mut graph,
+                                        self.redis_conn.clone(),
+                                    )
+                                    .await
+                                    {
+                                        log::error!("Failed to process cumulative stats: {e}");
+                                    }
+                                    last_midnight_check = Utc::now();
+                                }
+                            }
+                            std::result::Result::Err(e) => {
+                                log::error!("Bitunix WebSocket ticker stream error: {e}");
+                                break;
+                            }
+                        }
+                    }
+                    warn!("Bitunix WebSocket stream closed. Attempting to reconnect...");
+                }
+                std::result::Result::Err(e) => {
+                    log::error!(
+                        "Failed to subscribe to Bitunix tickers: {e}. Retrying in {backoff_secs}s..."
                     );
                 }
             }
