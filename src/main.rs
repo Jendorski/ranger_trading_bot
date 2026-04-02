@@ -4,8 +4,9 @@ use std::sync::Arc;
 use log::info;
 
 use crate::cache::RedisClient;
-use crate::config::Config;
+use crate::config::{Config, ExchangeType};
 use crate::exchange::HttpExchange;
+use crate::exchange::BitunixExchange;
 
 mod api;
 mod bot;
@@ -34,12 +35,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let binding = RedisClient::connect(&cfg.redis_url).await?;
     let redis_conn = binding.get_multiplexed_connection();
 
-    // 2️⃣ Create exchange instance (replace with real SDK in production)
-    let exchange = Arc::new(HttpExchange {
-        client: reqwest::Client::new(),
-        symbol: cfg.symbol.clone(),
-        redis_conn: redis_conn.clone(),
-    });
+    // 2️⃣ Create exchange instance based on EXCHANGE env var
+    let exchange: Arc<dyn crate::exchange::Exchange> = match cfg.exchange {
+        ExchangeType::Bitunix => Arc::new(BitunixExchange::new(&cfg)),
+        ExchangeType::Bitget => Arc::new(HttpExchange {
+            client: reqwest::Client::new(),
+            symbol: cfg.symbol.clone(),
+            redis_conn: redis_conn.clone(),
+        }),
+    };
 
     // 3️⃣ Bot state
     let mut bot = bot::Bot::new(redis_conn.clone(), &cfg).await?;
@@ -78,9 +82,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     info!("Starting bot loop...");
 
-    if let Err(e) = //bot.test(exchange.as_ref()).await {
-        bot.start_live_trading(exchange.as_ref()).await
-    {
+    let bot_result = match cfg.exchange {
+        ExchangeType::Bitunix => bot.start_live_trading_bitunix(exchange.as_ref()).await,
+        ExchangeType::Bitget => bot.start_live_trading(exchange.as_ref()).await,
+    };
+    if let Err(e) = bot_result {
         log::error!("Bot loop error: {e}");
     }
 
