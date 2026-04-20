@@ -254,26 +254,19 @@ impl SmcEngine {
                 });
                 self.last_bullish_bos_level = Some(p_high.price);
 
-                // If there was a pending sweep low (sweep happened before this BOS), emit StrongLow
-                if let Some(sweep_low) = &self.pending_sweep_low {
-                    // ensure the sweep happened before current BOS and sweep refers to a low prior to the high (basic sanity)
+                // StrongLow requires: sweep low occurred BEFORE the pivot high being broken.
+                // Sequence must be: Pivot Low 1 → Pivot High → Sweep Low → Bullish BOS.
+                // If the sweep low happened after the pivot high, the structure is invalid — discard.
+                if let Some(sweep_low) = self.pending_sweep_low.take() {
                     if sweep_low.index < p_high.index {
                         events.push(SMCEvent::StrongLow {
                             price: sweep_low.price,
                             time: self.bars[idx].time,
                             index: idx,
                         });
-                        // clear pending sweep low after it is used
-                        self.pending_sweep_low = None;
-                    } else {
-                        // if sweep low occurred after the pivot high, still consider (depends on desired policy)
-                        events.push(SMCEvent::StrongLow {
-                            price: sweep_low.price,
-                            time: self.bars[idx].time,
-                            index: idx,
-                        });
-                        self.pending_sweep_low = None;
                     }
+                    // sweep_low.index >= p_high.index: sweep occurred after the pivot high,
+                    // so no valid SMC setup exists — pending is discarded (take() already cleared it).
                 }
             }
         }
@@ -292,13 +285,19 @@ impl SmcEngine {
                 });
                 self.last_bearish_bos_level = Some(p_low.price);
 
-                if let Some(sweep_high) = &self.pending_sweep_high {
-                    events.push(SMCEvent::StrongHigh {
-                        price: sweep_high.price,
-                        time: self.bars[idx].time,
-                        index: idx,
-                    });
-                    self.pending_sweep_high = None;
+                // StrongHigh requires: sweep high occurred BEFORE the pivot low being broken.
+                // Sequence must be: Pivot High 1 → Pivot Low → Sweep High → Bearish BOS.
+                // If the sweep high happened after the pivot low, the structure is invalid — discard.
+                if let Some(sweep_high) = self.pending_sweep_high.take() {
+                    if sweep_high.index < p_low.index {
+                        events.push(SMCEvent::StrongHigh {
+                            price: sweep_high.price,
+                            time: self.bars[idx].time,
+                            index: idx,
+                        });
+                    }
+                    // sweep_high.index >= p_low.index: sweep occurred after the pivot low,
+                    // so no valid SMC setup exists — pending is discarded (take() already cleared it).
                 }
             }
         }
