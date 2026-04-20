@@ -65,6 +65,28 @@ async fn main() -> Result<(), Box<dyn Error>> {
         });
     }
 
+    // 4H VRVP — 500 candles (~83 days of structure); 100 bins; refresh every 30 min
+    let vrvp_conn_4h = redis_conn.clone();
+    tokio::spawn(async move {
+        trackers::visible_range_volume_profile::vrvp_loop(vrvp_conn_4h, "4H", "500", 100, 1800).await;
+    });
+
+    // 1D VRVP — 365 candles (~1 year of daily structure); 75 bins; refresh every 2 hours
+    let vrvp_conn_1d = redis_conn.clone();
+    tokio::spawn(async move {
+        trackers::visible_range_volume_profile::vrvp_loop(vrvp_conn_1d, "1D", "365", 75, 7200).await;
+    });
+
+    // 1W VRVP — 52 candles (~1 year of weekly structure); 60 bins; refresh every 4 hours
+    let vrvp_conn_1w = redis_conn.clone();
+    tokio::spawn(async move {
+        trackers::visible_range_volume_profile::vrvp_loop(vrvp_conn_1w, "1W", "52", 60, 14400).await;
+    });
+
+    // 3D VRVP — not spawned: Bitget has no native 3D granularity.
+    // Requires fetching 1D bars and resampling into 3-day buckets before passing
+    // to VrvpEngine::compute(). Implement as a dedicated aggregation task.
+
     // 4️⃣ Spawn API server
     let api_conn = redis_conn.clone();
     let _api_handle = tokio::spawn(async move {
