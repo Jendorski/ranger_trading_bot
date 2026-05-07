@@ -45,11 +45,14 @@
 //! Pass explicit parameters via [`RsiDivEngine::new`] when the timeframe
 //! differs from 5m/15m.
 
+#![allow(dead_code)]
+
 use std::collections::VecDeque;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use super::rsi_core::RsiCore;
 use super::smart_money_concepts::Bar;
 
 // ---------------------------------------------------------------------------
@@ -172,19 +175,12 @@ const PIVOT_MEMORY: usize = 3;
 /// - `range_lower = 5`, `range_upper = 60`
 pub struct RsiDivEngine {
     // Config
-    len: usize,
     lb_left: usize,
     lb_right: usize,
     range_lower: usize,
     range_upper: usize,
 
-    // RSI state — Wilder's smoothing (matches `ta.rsi` in Pine Script)
-    prev_close: Option<f64>,
-    avg_gain: f64,
-    avg_loss: f64,
-    rsi_ready: bool,
-    init_gains: Vec<f64>,
-    init_losses: Vec<f64>,
+    rsi: RsiCore,
 
     /// Rolling window of size `lb_left + lb_right + 1`.
     /// Pivot detection reads RSI and price from this single deque; all three
@@ -220,17 +216,11 @@ impl RsiDivEngine {
     ) -> Self {
         let win_size = lb_left + lb_right + 1;
         Self {
-            len,
+            rsi: RsiCore::new(len),
             lb_left,
             lb_right,
             range_lower,
             range_upper,
-            prev_close: None,
-            avg_gain: 0.0,
-            avg_loss: 0.0,
-            rsi_ready: false,
-            init_gains: Vec::with_capacity(len),
-            init_losses: Vec::with_capacity(len),
             win: VecDeque::with_capacity(win_size),
             pivot_lows: VecDeque::with_capacity(PIVOT_MEMORY),
             pivot_highs: VecDeque::with_capacity(PIVOT_MEMORY),
@@ -266,54 +256,6 @@ impl RsiDivEngine {
     }
 
     // -----------------------------------------------------------------------
-    // RSI computation (Wilder's smoothing — identical to `ta.rsi`)
-    // -----------------------------------------------------------------------
-
-    fn update_rsi(&mut self, close: f64) -> Option<f64> {
-        let result = if let Some(prev) = self.prev_close {
-            let change = close - prev;
-            let gain = change.max(0.0);
-            let loss = (-change).max(0.0);
-
-            if !self.rsi_ready {
-                // Phase 1: accumulate `len` changes for the initial SMA
-                self.init_gains.push(gain);
-                self.init_losses.push(loss);
-
-                if self.init_gains.len() == self.len {
-                    self.avg_gain =
-                        self.init_gains.iter().sum::<f64>() / self.len as f64;
-                    self.avg_loss =
-                        self.init_losses.iter().sum::<f64>() / self.len as f64;
-                    self.rsi_ready = true;
-                    Some(self.rsi_value())
-                } else {
-                    None
-                }
-            } else {
-                // Phase 2: Wilder's smoothing
-                let len_f = self.len as f64;
-                self.avg_gain = (self.avg_gain * (len_f - 1.0) + gain) / len_f;
-                self.avg_loss = (self.avg_loss * (len_f - 1.0) + loss) / len_f;
-                Some(self.rsi_value())
-            }
-        } else {
-            None // first bar — no previous close
-        };
-
-        self.prev_close = Some(close);
-        result
-    }
-
-    #[inline]
-    fn rsi_value(&self) -> f64 {
-        if self.avg_loss == 0.0 {
-            return 100.0;
-        }
-        100.0 - 100.0 / (1.0 + self.avg_gain / self.avg_loss)
-    }
-
-    // -----------------------------------------------------------------------
     // Public interface
     // -----------------------------------------------------------------------
 
@@ -323,7 +265,7 @@ impl RsiDivEngine {
         let bar_idx = self.global_bar_idx;
         self.global_bar_idx += 1;
 
-        let Some(rsi) = self.update_rsi(bar.close) else {
+        let Some(rsi) = self.rsi.update(bar.close) else {
             return Vec::new();
         };
 
@@ -360,7 +302,7 @@ impl RsiDivEngine {
                 .retain(|p| cand_global.saturating_sub(p.bar_index) <= self.range_upper);
 
             // RSI zone filter: skip bullish signals when RSI is too high.
-            let bull_zone_ok = self.bull_rsi_max.map_or(true, |max| cand_rsi < max);
+            let bull_zone_ok = self.bull_rsi_max.is_none_or(|max| cand_rsi < max);
 
             // Check every stored pivot in the valid distance window.
             for prev in &self.pivot_lows {
@@ -418,7 +360,7 @@ impl RsiDivEngine {
                 .retain(|p| cand_global.saturating_sub(p.bar_index) <= self.range_upper);
 
             // RSI zone filter: skip bearish signals when RSI is too low.
-            let bear_zone_ok = self.bear_rsi_min.map_or(true, |min| cand_rsi > min);
+            let bear_zone_ok = self.bear_rsi_min.is_none_or(|min| cand_rsi > min);
 
             for prev in &self.pivot_highs {
                 let dist = cand_global.saturating_sub(prev.bar_index);

@@ -23,4 +23,6 @@ target
 .env
 Cargo.lock
 
-data/
+data/*.json
+data/*.csv
+data/*.zip

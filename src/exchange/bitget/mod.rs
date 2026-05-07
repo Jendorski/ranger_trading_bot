@@ -165,6 +165,34 @@ pub trait FuturesCall {
     async fn modify_futures_order(&self, open_position: &OpenPosition) -> Result<PlaceOrderData>;
 }
 
+/// Fetches OHLCV candles from the Bitget public futures endpoint using a
+/// caller-supplied client. No per-call allocation; safe to call from many tasks
+/// that share one `Arc<reqwest::Client>`.
+pub async fn fetch_bitget_candles(
+    client: &reqwest::Client,
+    symbol: &str,
+    interval: &str,
+    limit: &str,
+) -> Result<Vec<Candle>> {
+    let url = format!(
+        "https://api.bitget.com/api/v2/mix/market/candles?symbol={symbol}&granularity={interval}&limit={limit}&productType=usdt-futures"
+    );
+    let text = client.get(&url).send().await?.text().await?;
+    let response: ApiResponse<Vec<Candle>> = serde_json::from_str(&text).map_err(|e| {
+        anyhow::anyhow!("Failed to parse Bitget candles: {e}, response: {text}")
+    })?;
+    if response.code != "00000" {
+        return Err(anyhow::anyhow!(
+            "Bitget API error ({}): {}",
+            response.code,
+            response.msg
+        ));
+    }
+    response
+        .data
+        .ok_or_else(|| anyhow::anyhow!("Bitget returned ok code but null data in candles response"))
+}
+
 /// Simple HTTP‑based mock of the `Exchange` trait – replace with your real SDK.
 ///
 /// In this example we hit a public ticker endpoint (e.g. Binance).
@@ -185,36 +213,7 @@ impl CandleData for HttpCandleData {
     }
 
     async fn get_bitget_candles(&self, interval: String, limit: String) -> Result<Vec<Candle>> {
-        let url = format!(
-            "https://api.bitget.com/api/v2/mix/market/candles?symbol={}&granularity={}&limit={}&productType=usdt-futures",
-            self.symbol, interval, limit
-        );
-        //info!("url: {:?}", url);
-        let bitget = self.client.get(url).send().await?;
-
-        let bit_text = bitget.text().await?;
-        let response: ApiResponse<Vec<Candle>> = serde_json::from_str(&bit_text).map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to parse Bitget candles: {}, response text: {}",
-                e,
-                bit_text
-            )
-        })?;
-
-        if response.code != "00000" {
-            return Err(anyhow::anyhow!(
-                "Bitget API error (code {}): {}",
-                response.code,
-                response.msg
-            ));
-        }
-        // assert_eq!(response.data.len(), limit.parse::<usize>().unwrap());
-
-        let candles = response.data.ok_or_else(|| {
-            anyhow::anyhow!("Bitget returned ok code but null data in candles response")
-        })?;
-
-        Ok(candles)
+        fetch_bitget_candles(&self.client, &self.symbol, &interval, &limit).await
     }
 
     async fn get_history_funding_rate(&self, limit: String) -> Result<Vec<FundingRateData>> {
