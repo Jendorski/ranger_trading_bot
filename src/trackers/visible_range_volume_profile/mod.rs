@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::TimeZone;
@@ -7,7 +8,7 @@ use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use tokio::time;
 
-use crate::exchange::bitget::{CandleData, HttpCandleData};
+use crate::exchange::bitget::fetch_bitget_candles;
 use crate::helper::TRADING_BOT_VRVP;
 use crate::trackers::smart_money_concepts::Bar;
 
@@ -63,6 +64,7 @@ pub struct VrvpProfile {
 
 // ─── Profile query API ────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 impl VrvpProfile {
     /// Returns the [`NodeType`] of whichever bin contains `price`.
     /// Returns [`NodeType::Neutral`] if price is outside the profile range.
@@ -291,10 +293,13 @@ impl VrvpEngine {
 
 // ─── Data fetching ────────────────────────────────────────────────────────────
 
-async fn fetch_bars(timeframe: String, limit: String) -> Result<Vec<Bar>, String> {
-    let bitget_candles = <HttpCandleData as CandleData>::new();
-    let candles = bitget_candles
-        .get_bitget_candles(timeframe, limit)
+async fn fetch_bars(
+    http: &reqwest::Client,
+    symbol: &str,
+    timeframe: &str,
+    limit: u32,
+) -> Result<Vec<Bar>, String> {
+    let candles = fetch_bitget_candles(http, symbol, timeframe, &limit.to_string())
         .await
         .map_err(|e| e.to_string())?;
     Ok(candles
@@ -315,12 +320,14 @@ async fn fetch_bars(timeframe: String, limit: String) -> Result<Vec<Bar>, String
 
 async fn vrvp_main(
     conn: &mut redis::aio::MultiplexedConnection,
+    http: &reqwest::Client,
+    symbol: &str,
     timeframe: &str,
-    candle_count: &str,
+    candle_count: u32,
     bin_count: usize,
     interval_secs: u64,
 ) {
-    let mut bars = match fetch_bars(timeframe.to_string(), candle_count.to_string()).await {
+    let mut bars = match fetch_bars(http, symbol, timeframe, candle_count).await {
         Ok(b) if b.is_empty() => {
             info!("VRVP[{timeframe}]: no bar data received, skipping");
             return;
@@ -358,7 +365,7 @@ async fn vrvp_main(
     info!("VRVP[{timeframe}]: HVN bins={hvn_count}  LVN bins={lvn_count}");
 
     // Key is timeframe-qualified so multiple instances can coexist in Redis.
-    let redis_key = format!("{}:{}", TRADING_BOT_VRVP, timeframe);
+    let redis_key = format!("{TRADING_BOT_VRVP}:{timeframe}");
     let serialized = match serde_json::to_string(&profile) {
         Ok(s) => s,
         Err(e) => {
@@ -367,7 +374,9 @@ async fn vrvp_main(
         }
     };
     let ttl = (interval_secs * 2) as usize;
-    let _: () = conn.set_ex(redis_key, serialized, ttl).await.unwrap();
+    if let Err(e) = conn.set_ex::<_, _, ()>(redis_key, serialized, ttl).await {
+        log::error!("VRVP[{timeframe}]: Redis write failed: {e}");
+    }
 }
 
 // ─── Background loop ──────────────────────────────────────────────────────────
@@ -385,15 +394,17 @@ async fn vrvp_main(
 /// Results are stored under `trading_bot:vrvp:<timeframe>`.
 pub async fn vrvp_loop(
     mut conn: redis::aio::MultiplexedConnection,
+    http: Arc<reqwest::Client>,
+    symbol: Arc<str>,
     timeframe: &'static str,
-    candle_count: &'static str,
+    candle_count: u32,
     bin_count: usize,
     interval_secs: u64,
 ) {
     let mut interval = time::interval(Duration::from_secs(interval_secs));
     loop {
         interval.tick().await;
-        vrvp_main(&mut conn, timeframe, candle_count, bin_count, interval_secs).await;
+        vrvp_main(&mut conn, &http, &symbol, timeframe, candle_count, bin_count, interval_secs).await;
     }
 }
 

@@ -4,7 +4,7 @@ use redis::AsyncCommands;
 use serde::Serialize;
 use tokio::time;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -282,6 +282,89 @@ async fn process_weekly_ichimoku(mut redis_conn: MultiplexedConnection) -> Resul
         .await?;
 
     Ok(())
+}
+
+// ─── Ichimoku Baseline (Kijun-sen) ───────────────────────────────────────────
+
+/// Streaming Kijun-sen: 26-period Donchian midpoint — (highest_high + lowest_low) / 2.
+///
+/// Feed bars in chronological order with [`IchimokuBaseline::update`].
+/// [`IchimokuBaseline::value`] is `None` until the first 26 bars have been seen.
+#[derive(Debug, Clone)]
+pub struct IchimokuBaseline {
+    highs: VecDeque<f64>,
+    lows: VecDeque<f64>,
+    pub value: Option<f64>,
+}
+
+impl IchimokuBaseline {
+    const PERIOD: usize = 26;
+
+    pub fn new() -> Self {
+        Self {
+            highs: VecDeque::with_capacity(Self::PERIOD),
+            lows: VecDeque::with_capacity(Self::PERIOD),
+            value: None,
+        }
+    }
+
+    pub fn update(&mut self, high: f64, low: f64) {
+        self.highs.push_back(high);
+        self.lows.push_back(low);
+        if self.highs.len() > Self::PERIOD {
+            self.highs.pop_front();
+            self.lows.pop_front();
+        }
+        if self.highs.len() == Self::PERIOD {
+            let max_h = self.highs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            let min_l = self.lows.iter().copied().fold(f64::INFINITY, f64::min);
+            self.value = Some((max_h + min_l) / 2.0);
+        }
+    }
+}
+
+impl Default for IchimokuBaseline {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn baseline_needs_26_bars() {
+        let mut bl = IchimokuBaseline::new();
+        for i in 0..25 {
+            bl.update(100.0 + i as f64, 90.0 + i as f64);
+            assert!(bl.value.is_none(), "should be None before 26 bars");
+        }
+        bl.update(125.0, 115.0);
+        assert!(bl.value.is_some(), "should be Some after 26 bars");
+    }
+
+    #[test]
+    fn baseline_midpoint_is_correct() {
+        let mut bl = IchimokuBaseline::new();
+        for _ in 0..26 {
+            bl.update(200.0, 100.0);
+        }
+        assert!((bl.value.unwrap() - 150.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn baseline_rolls_window() {
+        let mut bl = IchimokuBaseline::new();
+        // Feed 26 bars with high=100, low=50 → baseline = 75
+        for _ in 0..26 {
+            bl.update(100.0, 50.0);
+        }
+        assert!((bl.value.unwrap() - 75.0).abs() < 1e-9);
+        // Feed a bar with high=200, low=50 — new max_high = 200, baseline = 125
+        bl.update(200.0, 50.0);
+        assert!((bl.value.unwrap() - 125.0).abs() < 1e-9);
+    }
 }
 
 // pub fn kumo_cross(span_a: &[Option<f64>], span_b: &[Option<f64>]) -> Vec<Option<KumoCross>> {
