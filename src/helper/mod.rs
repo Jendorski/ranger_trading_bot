@@ -44,6 +44,17 @@ pub const TRADING_BOT_SMART_MONEY_CONCEPTS_NEXT_CALL: &str =
 #[allow(dead_code)]
 pub const TRADING_BOT_RECOMMENDED_CALL: &str = "trading_bot:recommended_call";
 
+pub const TRADING_BOT_VRVP: &str = "trading_bot:vrvp";
+pub const TRADING_BOT_RSI_REGIME: &str = "trading_bot:rsi_regime";
+pub const TRADING_BOT_MACRO_TRACKER: &str = "trading_bot:macro_tracker";
+
+pub const TRADING_BOT_RSI_SNAPSHOT_2W:  &str = "trading_bot:rsi_snapshot:2W";
+pub const TRADING_BOT_RSI_SNAPSHOT_3D:  &str = "trading_bot:rsi_snapshot:3D";
+pub const TRADING_BOT_RSI_SNAPSHOT_1D:  &str = "trading_bot:rsi_snapshot:1D";
+pub const TRADING_BOT_RSI_SNAPSHOT_4H:  &str = "trading_bot:rsi_snapshot:4H";
+pub const TRADING_BOT_RSI_SNAPSHOT_1H:  &str = "trading_bot:rsi_snapshot:1H";
+pub const TRADING_BOT_RSI_SNAPSHOT_15M: &str = "trading_bot:rsi_snapshot:15m";
+
 pub const WEEKLY_CANDLES: &str = "weekly_candles";
 pub const WEEKLY_ICHIMOKU: &str = "weekly_ichimoku";
 pub const LAST_25_WEEKLY_ICHIMOKU_SPANS: &str = "last_25_weekly_ichimoku_spans";

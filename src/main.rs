@@ -1,6 +1,8 @@
 use std::error::Error;
 use std::sync::Arc;
 
+use reqwest::Client;
+
 use log::info;
 
 use crate::cache::RedisClient;
@@ -13,11 +15,15 @@ mod bot;
 mod cache;
 mod calendar;
 mod config;
+mod data;
 mod encryption;
 mod exchange;
 mod graph;
 mod helper;
+mod regime;
+mod tasks;
 mod trackers;
+mod types;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -35,49 +41,39 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let binding = RedisClient::connect(&cfg.redis_url).await?;
     let redis_conn = binding.get_multiplexed_connection();
 
-    // 2️⃣ Create exchange instance based on EXCHANGE env var
+    // 2️⃣ Seed historical candle data for all timeframes before anything else starts
+    data::ensure_seeds_ready().await;
+
+    // Single shared HTTP client — one connection pool for the entire process.
+    let http = Arc::new(Client::new());
+
+    // 3️⃣ Create exchange instance based on EXCHANGE env var
     let exchange: Arc<dyn crate::exchange::Exchange> = match cfg.exchange {
         ExchangeType::Bitunix => Arc::new(BitunixExchange::new(&cfg)),
         ExchangeType::Bitget => Arc::new(HttpExchange {
-            client: reqwest::Client::new(),
+            client: (*http).clone(),
             symbol: cfg.symbol.clone(),
             redis_conn: redis_conn.clone(),
         }),
     };
 
-    // 3️⃣ Bot state
+    // 4️⃣ Bot state
     let mut bot = bot::Bot::new(redis_conn.clone(), &cfg).await?;
 
-    if cfg.use_smc_indicator {
-        let smc_conn = redis_conn.clone();
-        let smc_config = cfg.clone();
-        let _smc_handle = tokio::spawn(async move {
-            trackers::smart_money_concepts::smc_loop(smc_conn, smc_config).await;
-        });
-    }
+    let mut task_set = tasks::spawn_background_tasks(redis_conn.clone(), &cfg, Arc::clone(&http)).await;
 
-    if cfg.use_ichimoku_indicator {
-        let ichimoku_conn = redis_conn.clone();
-        let _tracker_ichimoku = tokio::spawn(async move {
-            if let Err(e) = trackers::ichimoku::ichimoku_loop(ichimoku_conn).await {
-                log::error!("Ichimoku tracker error: {e}");
+    // Supervisor: watches every background task for unexpected exits or panics.
+    // Dropping the JoinSet would abort all tasks, so it must live here for the
+    // process lifetime — moving it into this task achieves that.
+    tokio::spawn(async move {
+        while let Some(result) = task_set.join_next().await {
+            match result {
+                Ok(()) => log::warn!("[supervisor] A background task returned — this should not happen"),
+                Err(e) if e.is_panic() => log::error!("[supervisor] A background task panicked: {e:?}"),
+                Err(e) => log::error!("[supervisor] A background task was cancelled: {e:?}"),
             }
-        });
-    }
-
-    // 4️⃣ Spawn API server
-    let api_conn = redis_conn.clone();
-    let _api_handle = tokio::spawn(async move {
-        let app = api::create_router(api_conn);
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:4545")
-            .await
-            .expect("Failed to bind API server");
-
-        info!("API server listening on http://0.0.0.0:4545");
-
-        if let Err(e) = axum::serve(listener, app).await {
-            log::error!("API server error: {e}");
         }
+        log::error!("[supervisor] All background tasks have stopped");
     });
 
     info!("Starting bot loop...");

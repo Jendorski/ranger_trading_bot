@@ -86,6 +86,26 @@ pub enum SMCEvent {
     }, // Sweep high followed by bearish BOS (SHORT)
 }
 
+/// Pending sweep low paired with the pivot high that was active when the sweep was detected.
+/// Snapshotting the reference pivot high prevents the BOS check from failing when
+/// `last_pivot_high` advances (e.g. a sweep high forms) before the bullish BOS fires.
+#[derive(Debug, Clone)]
+struct PendingSweepLow {
+    sweep: Pivot,
+    /// The pivot high that was `last_pivot_high` at the moment this sweep low was recorded.
+    reference_pivot_high: Pivot,
+}
+
+/// Pending sweep high paired with the pivot low that was active when the sweep was detected.
+/// Storing the reference pivot low allows the BOS sequence check to remain valid even if
+/// `last_pivot_low` advances to a newer index before the BOS fires.
+#[derive(Debug, Clone)]
+struct PendingSweepHigh {
+    sweep: Pivot,
+    /// The pivot low that was `last_pivot_low` at the moment this sweep high was recorded.
+    reference_pivot_low: Pivot,
+}
+
 /// The main engine. Use `process_bar` for each new bar (in chronological order).
 #[derive(Debug, Clone)]
 pub struct SmcEngine {
@@ -98,8 +118,8 @@ pub struct SmcEngine {
     last_pivot_high: Option<Pivot>,
     last_pivot_low: Option<Pivot>,
     /// Most recent sweep indicators: preserve the pivot (sweep) until a BOS occurs
-    pending_sweep_low: Option<Pivot>,
-    pending_sweep_high: Option<Pivot>,
+    pending_sweep_low: Option<PendingSweepLow>,
+    pending_sweep_high: Option<PendingSweepHigh>,
     /// Keep last known BOS levels (to avoid double emitting)
     last_bullish_bos_level: Option<f64>,
     last_bearish_bos_level: Option<f64>,
@@ -198,16 +218,21 @@ impl SmcEngine {
             // sweep detection: if this pivot low is lower than previous pivot low => sweep
             if let Some(prev_low) = &self.last_pivot_low {
                 if p.price < prev_low.price {
-                    // mark pending sweep low
-                    self.pending_sweep_low = Some(p.clone());
+                    // Only record a pending sweep when a reference pivot high exists.
+                    // That reference high is snapshotted here so the BOS sequence check
+                    // remains correct even if last_pivot_high advances before the BOS fires.
+                    if let Some(ref_high) = &self.last_pivot_high {
+                        self.pending_sweep_low = Some(PendingSweepLow {
+                            sweep: p.clone(),
+                            reference_pivot_high: ref_high.clone(),
+                        });
+                    }
                     events.push(SMCEvent::SweepLow {
                         price: p.price,
                         time: p.time,
                         index: p.index,
                     });
                 }
-            } else {
-                // first pivot low seen -> not a sweep yet but store
             }
             self.last_pivot_low = Some(p);
         }
@@ -227,7 +252,15 @@ impl SmcEngine {
 
             if let Some(prev_high) = &self.last_pivot_high {
                 if p.price > prev_high.price {
-                    self.pending_sweep_high = Some(p.clone());
+                    // Only record a pending sweep when a reference pivot low exists.
+                    // That reference low is snapshotted here so the BOS sequence check
+                    // remains correct even if last_pivot_low advances before the BOS fires.
+                    if let Some(ref_low) = &self.last_pivot_low {
+                        self.pending_sweep_high = Some(PendingSweepHigh {
+                            sweep: p.clone(),
+                            reference_pivot_low: ref_low.clone(),
+                        });
+                    }
                     events.push(SMCEvent::SweepHigh {
                         price: p.price,
                         time: p.time,
@@ -254,25 +287,17 @@ impl SmcEngine {
                 });
                 self.last_bullish_bos_level = Some(p_high.price);
 
-                // If there was a pending sweep low (sweep happened before this BOS), emit StrongLow
-                if let Some(sweep_low) = &self.pending_sweep_low {
-                    // ensure the sweep happened before current BOS and sweep refers to a low prior to the high (basic sanity)
-                    if sweep_low.index < p_high.index {
+                // StrongLow requires: Pivot High → Sweep Low → Bullish BOS.
+                // The BOS must break a pivot high at or above the reference price captured
+                // when the sweep was detected. Index comparison is always true (indices only
+                // advance), so price is the correct discriminator here.
+                if let Some(pending) = self.pending_sweep_low.take() {
+                    if pending.reference_pivot_high.price <= p_high.price {
                         events.push(SMCEvent::StrongLow {
-                            price: sweep_low.price,
+                            price: pending.sweep.price,
                             time: self.bars[idx].time,
                             index: idx,
                         });
-                        // clear pending sweep low after it is used
-                        self.pending_sweep_low = None;
-                    } else {
-                        // if sweep low occurred after the pivot high, still consider (depends on desired policy)
-                        events.push(SMCEvent::StrongLow {
-                            price: sweep_low.price,
-                            time: self.bars[idx].time,
-                            index: idx,
-                        });
-                        self.pending_sweep_low = None;
                     }
                 }
             }
@@ -292,13 +317,18 @@ impl SmcEngine {
                 });
                 self.last_bearish_bos_level = Some(p_low.price);
 
-                if let Some(sweep_high) = &self.pending_sweep_high {
-                    events.push(SMCEvent::StrongHigh {
-                        price: sweep_high.price,
-                        time: self.bars[idx].time,
-                        index: idx,
-                    });
-                    self.pending_sweep_high = None;
+                // StrongHigh requires: Pivot Low → Sweep High → Bearish BOS.
+                // The BOS must break a pivot low at or below the reference price captured
+                // when the sweep was detected. Index comparison is always true (indices only
+                // advance), so price is the correct discriminator here.
+                if let Some(pending) = self.pending_sweep_high.take() {
+                    if pending.reference_pivot_low.price >= p_low.price {
+                        events.push(SMCEvent::StrongHigh {
+                            price: pending.sweep.price,
+                            time: self.bars[idx].time,
+                            index: idx,
+                        });
+                    }
                 }
             }
         }
@@ -545,6 +575,47 @@ mod tests {
         assert!(
             found_strong_low,
             "expected StrongLow in events, got {emitted:?}"
+        );
+    }
+
+    #[test]
+    fn test_strong_high_detection() {
+        let mut eng = SmcEngine::new(2, 2);
+        let start = Utc::now();
+
+        // Sequence:
+        // 1. Pivot High 1
+        // 2. Pivot Low 1
+        // 3. Pivot High 2 (Sweep High — above Pivot High 1)
+        // 4. Bearish BOS (Close < Pivot Low 1) → StrongHigh
+        let bars = vec![
+            make_bar(start + Duration::seconds(0), 120.0, 120.0, 120.0, 120.0), // 0
+            make_bar(start + Duration::seconds(60), 121.0, 121.0, 121.0, 121.0), // 1
+            make_bar(start + Duration::seconds(120), 130.0, 130.0, 130.0, 130.0), // 2: Pivot High 1
+            make_bar(start + Duration::seconds(180), 121.0, 121.0, 121.0, 121.0), // 3
+            make_bar(start + Duration::seconds(240), 120.0, 120.0, 120.0, 120.0), // 4 -> ID Pivot High 1
+            make_bar(start + Duration::seconds(300), 110.0, 110.0, 110.0, 110.0), // 5: Pivot Low 1
+            make_bar(start + Duration::seconds(360), 120.0, 120.0, 120.0, 120.0), // 6
+            make_bar(start + Duration::seconds(420), 121.0, 121.0, 121.0, 121.0), // 7 -> ID Pivot Low 1
+            make_bar(start + Duration::seconds(480), 140.0, 140.0, 140.0, 140.0), // 8: Pivot High 2 (Sweep!!)
+            make_bar(start + Duration::seconds(540), 121.0, 121.0, 121.0, 121.0), // 9
+            make_bar(start + Duration::seconds(600), 120.0, 120.0, 120.0, 120.0), // 10 -> ID Pivot High 2
+            make_bar(start + Duration::seconds(660), 105.0, 105.0, 105.0, 105.0), // 11 -> Bearish BOS -> Strong High!
+        ];
+
+        let mut emitted = Vec::new();
+        for b in bars {
+            let evs = eng.process_bar(b);
+            for e in evs {
+                let js = serde_json::to_string(&e).unwrap();
+                emitted.push(js);
+            }
+        }
+
+        let found_strong_high = emitted.iter().any(|s| s.contains("\"StrongHigh\""));
+        assert!(
+            found_strong_high,
+            "expected StrongHigh in events, got {emitted:?}"
         );
     }
 }
