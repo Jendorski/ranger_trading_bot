@@ -6,6 +6,7 @@ use tokio::task::JoinSet;
 use crate::api;
 use crate::config::Config;
 use crate::helper::{
+    TRADING_BOT_RSI_DIV_1D, TRADING_BOT_RSI_DIV_4H,
     TRADING_BOT_RSI_SNAPSHOT_1D, TRADING_BOT_RSI_SNAPSHOT_1H,
     TRADING_BOT_RSI_SNAPSHOT_15M, TRADING_BOT_RSI_SNAPSHOT_3D,
     TRADING_BOT_RSI_SNAPSHOT_4H,
@@ -169,6 +170,24 @@ pub async fn spawn_background_tasks(
         trackers::rsi_regime_tracker::rsi_snapshot_loop(
             conn, h, sym, seeds, "15m", 200, 60,
             TRADING_BOT_RSI_SNAPSHOT_15M,
+        ).await;
+    });
+
+    // 4H RSI divergence — primary entry strength gate; refresh every 15 minutes
+    let (conn, h, sym, seeds) = (redis_conn.clone(), Arc::clone(&http), Arc::clone(&symbol), Arc::clone(&seed_4h));
+    task_set.spawn(async move {
+        trackers::rsi_divergence_indicator::rsi_div_loop(
+            conn, h, sym, seeds, "4H", 300, 900,
+            TRADING_BOT_RSI_DIV_4H,
+        ).await;
+    });
+
+    // 1D RSI divergence — macro divergence context; refresh every 2 hours
+    let (conn, h, sym, seeds) = (redis_conn.clone(), Arc::clone(&http), Arc::clone(&symbol), Arc::clone(&seed_1d));
+    task_set.spawn(async move {
+        trackers::rsi_divergence_indicator::rsi_div_loop(
+            conn, h, sym, seeds, "1D", 200, 7200,
+            TRADING_BOT_RSI_DIV_1D,
         ).await;
     });
 

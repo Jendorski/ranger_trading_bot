@@ -4,12 +4,12 @@
 //!
 //! ## Analyst usage (from transcript)
 //!
-//! The analyst treats the weekly RSI 42–44 zone as a binary macro gate:
-//! - Breaking **above** 44 → bull market regime confirmed
-//! - Breaking **below** 43 → bear market regime confirmed
-//! - Between 43–44 → transitional / neutral
+//! The analyst treats the weekly RSI 42–45 zone as a binary macro gate:
+//! - Breaking **above** 45 → bull market regime confirmed
+//! - Breaking **below** 42 → bear market regime confirmed
+//! - Between 42–45 → transitional / neutral
 //!
-//! "When RSI breaks back above the 43 level — historically this has confirmed
+//! "When RSI breaks back above the 42 level — historically this has confirmed
 //! macro uptrends." / "Bull market started when price broke above these lines."
 //!
 //! ## Usage
@@ -30,7 +30,7 @@
 //! ## Timeframe note
 //!
 //! [`RsiRegimeTracker::weekly_default`] uses the analyst's exact weekly levels
-//! (43.0 / 44.0). For other timeframes, use [`RsiRegimeTracker::new`] with
+//! (42.0 / 45.0). For other timeframes, use [`RsiRegimeTracker::new`] with
 //! custom thresholds.
 
 use std::collections::BTreeMap;
@@ -88,9 +88,9 @@ pub struct RsiRegimeEvent {
 pub struct RsiRegimeTracker {
     rsi: RsiCore,
 
-    /// RSI must fall below this level to enter `Bearish` (e.g. `43.0`).
+    /// RSI must fall below this level to enter `Bearish` (e.g. `42.0`).
     bear_threshold: f64,
-    /// RSI must rise above this level to enter `Bullish` (e.g. `44.0`).
+    /// RSI must rise above this level to enter `Bullish` (e.g. `45.0`).
     bull_threshold: f64,
 
     regime: RegimeState,
@@ -314,6 +314,32 @@ async fn rsi_regime_main(
 }
 
 // ---------------------------------------------------------------------------
+// RsiComputer — thin RSI-only wrapper around RsiCore
+// ---------------------------------------------------------------------------
+
+/// Pure RSI computer with no regime thresholds.
+///
+/// Used by the snapshot loops that only need an RSI value — not a regime
+/// classification. Wraps [`RsiCore`] directly so the intent is clear at the
+/// call site.
+#[derive(Clone)]
+struct RsiComputer(RsiCore);
+
+impl RsiComputer {
+    fn new(len: usize) -> Self {
+        Self(RsiCore::new(len))
+    }
+
+    fn update(&mut self, close: f64) -> Option<f64> {
+        self.0.update(close)
+    }
+
+    fn current(&self) -> Option<f64> {
+        self.0.current()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // RsiSnapshot — lightweight snapshot for non-regime timeframes
 // ---------------------------------------------------------------------------
 
@@ -353,9 +379,9 @@ pub async fn rsi_snapshot_loop(
 ) {
     // One-time seed warmup.
     let seed_cutoff = seed_bars.iter().map(|b| b.time).max();
-    let mut seed_tracker = RsiRegimeTracker::new(14, f64::NEG_INFINITY, f64::INFINITY);
-    for bar in seed_bars.iter().cloned() {
-        seed_tracker.process_bar(bar);
+    let mut seed_tracker = RsiComputer::new(14);
+    for bar in seed_bars.iter() {
+        seed_tracker.update(bar.close);
     }
     drop(seed_bars);
 
@@ -382,7 +408,7 @@ async fn rsi_snapshot_main(
     conn: &mut redis::aio::MultiplexedConnection,
     http: &reqwest::Client,
     symbol: &str,
-    seed_tracker: &RsiRegimeTracker,
+    seed_tracker: &RsiComputer,
     seed_cutoff: Option<DateTime<Utc>>,
     bitget_tf: &str,
     live_count: u32,
@@ -424,10 +450,10 @@ async fn rsi_snapshot_main(
     // --- 3. Clone warmed state and apply the live delta only ---
     let mut tracker = seed_tracker.clone();
     for bar in live_bars {
-        tracker.process_bar(bar);
+        tracker.update(bar.close);
     }
 
-    let Some(rsi) = tracker.current_rsi() else {
+    let Some(rsi) = tracker.current() else {
         info!("RSI-{bitget_tf}: not enough bars to compute RSI, skipping");
         return;
     };
@@ -472,9 +498,9 @@ pub async fn rsi_2w_loop(
 ) {
     // One-time seed warmup — seed_bars are already 2W-aggregated from the pipeline.
     let seed_cutoff = seed_bars.iter().map(|b| b.time).max();
-    let mut seed_tracker = RsiRegimeTracker::new(14, f64::NEG_INFINITY, f64::INFINITY);
-    for bar in seed_bars.iter().cloned() {
-        seed_tracker.process_bar(bar);
+    let mut seed_tracker = RsiComputer::new(14);
+    for bar in seed_bars.iter() {
+        seed_tracker.update(bar.close);
     }
     drop(seed_bars);
 
@@ -497,7 +523,7 @@ async fn rsi_2w_main(
     conn: &mut redis::aio::MultiplexedConnection,
     http: &reqwest::Client,
     symbol: &str,
-    seed_tracker: &RsiRegimeTracker,
+    seed_tracker: &RsiComputer,
     seed_cutoff: Option<DateTime<Utc>>,
     interval_secs: u64,
 ) {
@@ -513,10 +539,9 @@ async fn rsi_2w_main(
     // --- 2. Aggregate 1W → 2W, then filter to bars strictly newer than seed ---
     let mut buckets: BTreeMap<i64, Bar> = BTreeMap::new();
     for c in weekly_candles {
-        let t = Utc
-            .timestamp_millis_opt(c.timestamp)
-            .single()
-            .unwrap_or_else(Utc::now);
+        let Some(t) = Utc.timestamp_millis_opt(c.timestamp).single() else {
+            continue;
+        };
         let key = t.timestamp() / (14 * 24 * 3600);
         buckets
             .entry(key)
@@ -547,10 +572,10 @@ async fn rsi_2w_main(
     // --- 3. Clone warmed state and apply the live delta only ---
     let mut tracker = seed_tracker.clone();
     for bar in live_bars {
-        tracker.process_bar(bar);
+        tracker.update(bar.close);
     }
 
-    let Some(rsi) = tracker.current_rsi() else {
+    let Some(rsi) = tracker.current() else {
         info!("RSI-2W: not enough bars to compute RSI, skipping");
         return;
     };
@@ -611,7 +636,7 @@ mod tests {
 
     #[test]
     fn test_cross_into_bullish() {
-        let mut tracker = RsiRegimeTracker::new(14, 43.0, 44.0);
+        let mut tracker = RsiRegimeTracker::new(14, 42.0, 45.0);
         warmup(&mut tracker, 50.0);
 
         // RSI starts near 50 (neutral). Drive it high with a sustained rally.
@@ -624,19 +649,19 @@ mod tests {
         let evt = event.expect("expected a regime change event");
         assert_eq!(evt.next, RegimeState::Bullish, "regime should be Bullish");
         assert!(
-            evt.rsi_at_cross > 44.0,
-            "RSI at cross should exceed bull_threshold=44, got {}",
+            evt.rsi_at_cross > 45.0,
+            "RSI at cross should exceed bull_threshold=45, got {}",
             evt.rsi_at_cross
         );
-        assert_eq!(evt.threshold, 44.0);
+        assert_eq!(evt.threshold, 45.0);
     }
 
     #[test]
     fn test_cross_into_bearish() {
-        let mut tracker = RsiRegimeTracker::new(14, 43.0, 44.0);
+        let mut tracker = RsiRegimeTracker::new(14, 42.0, 45.0);
         warmup(&mut tracker, 100.0);
 
-        // Sustained decline drives RSI below 43.
+        // Sustained decline drives RSI below 42.
         let mut event: Option<RsiRegimeEvent> = None;
         for i in 0..50 {
             let c = (100.0 - i as f64 * 2.0).max(1.0);
@@ -646,16 +671,16 @@ mod tests {
         let evt = event.expect("expected a regime change event");
         assert_eq!(evt.next, RegimeState::Bearish, "regime should be Bearish");
         assert!(
-            evt.rsi_at_cross < 43.0,
-            "RSI at cross should be below bear_threshold=43, got {}",
+            evt.rsi_at_cross < 42.0,
+            "RSI at cross should be below bear_threshold=42, got {}",
             evt.rsi_at_cross
         );
-        assert_eq!(evt.threshold, 43.0);
+        assert_eq!(evt.threshold, 42.0);
     }
 
     #[test]
     fn test_no_duplicate_events() {
-        let mut tracker = RsiRegimeTracker::new(14, 43.0, 44.0);
+        let mut tracker = RsiRegimeTracker::new(14, 42.0, 45.0);
         warmup(&mut tracker, 50.0);
 
         // Drive into Bullish, then keep feeding high prices — only 1 event total.
@@ -677,12 +702,12 @@ mod tests {
 
     #[test]
     fn test_neutral_band_no_event() {
-        let mut tracker = RsiRegimeTracker::new(14, 43.0, 44.0);
+        let mut tracker = RsiRegimeTracker::new(14, 42.0, 45.0);
         warmup(&mut tracker, 50.0);
 
-        // Starting from warmup RSI ~50 → already above 44 → likely Bullish.
-        // Reset with a fresh tracker and feed prices that keep RSI in 43–44.
-        let mut tracker2 = RsiRegimeTracker::new(14, 43.0, 44.0);
+        // Starting from warmup RSI ~50 → already above 45 → likely Bullish.
+        // Reset with a fresh tracker and feed prices that keep RSI in 42–45.
+        let mut tracker2 = RsiRegimeTracker::new(14, 42.0, 45.0);
 
         // Warm up to RSI ≈ 43.5: alternate very small gains and losses
         for i in 0..200 {
@@ -691,7 +716,7 @@ mod tests {
         }
 
         // At this point RSI should be near 50 (equal avg_gain/loss).
-        // Feed a sequence that keeps RSI pinned between 43–44.
+        // Feed a sequence that keeps RSI pinned between 42–45.
         // Instead, just assert that if the regime is Neutral it stays Neutral
         // across 10 more flat bars.
         let start_regime = tracker2.regime();

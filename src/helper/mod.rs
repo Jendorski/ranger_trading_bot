@@ -48,6 +48,9 @@ pub const TRADING_BOT_VRVP: &str = "trading_bot:vrvp";
 pub const TRADING_BOT_RSI_REGIME: &str = "trading_bot:rsi_regime";
 pub const TRADING_BOT_MACRO_TRACKER: &str = "trading_bot:macro_tracker";
 
+pub const TRADING_BOT_RSI_DIV_4H: &str = "trading_bot:rsi_div:4H";
+pub const TRADING_BOT_RSI_DIV_1D: &str = "trading_bot:rsi_div:1D";
+
 pub const TRADING_BOT_RSI_SNAPSHOT_2W:  &str = "trading_bot:rsi_snapshot:2W";
 pub const TRADING_BOT_RSI_SNAPSHOT_3D:  &str = "trading_bot:rsi_snapshot:3D";
 pub const TRADING_BOT_RSI_SNAPSHOT_1D:  &str = "trading_bot:rsi_snapshot:1D";

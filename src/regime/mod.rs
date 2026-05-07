@@ -44,7 +44,11 @@ pub struct MacroTrackerSnapshot {
     pub gc_1w_lower_band: Option<f64>,
     /// Weekly Ichimoku Cloud baseline (Kijun-sen) — fifth level
     pub ichimoku_weekly_baseline: Option<f64>,
-    /// How many of the 5 levels the current price is trading above (0–5)
+    /// How many of the 5 levels have converged (i.e. are `Some`). Redis writes
+    /// are gated until this reaches 5.
+    pub levels_ready: u8,
+    /// How many of the 5 levels the current price is trading above (0–5).
+    /// Only meaningful when `levels_ready == 5`.
     pub price_above_count: u8,
     pub macro_bias: MacroBias,
     pub current_price: f64,
@@ -98,15 +102,13 @@ impl MacroTracker {
         let gc_1w_lower = self.gc_1w.lower_band;
         let baseline = self.baseline_1w.value;
 
-        let above_flags = [
-            ema_1d.map(|v| current_price > v),
-            ema_2w.map(|v| current_price > v),
-            gc_2w_mid.map(|v| current_price > v),
-            gc_1w_lower.map(|v| current_price > v),
-            baseline.map(|v| current_price > v),
-        ];
+        let levels: [Option<f64>; 5] = [ema_1d, ema_2w, gc_2w_mid, gc_1w_lower, baseline];
+        let levels_ready = levels.iter().filter(|v| v.is_some()).count() as u8;
 
-        let price_above_count = above_flags.iter().filter(|f| **f == Some(true)).count() as u8;
+        let price_above_count = levels
+            .iter()
+            .filter(|v| v.is_some_and(|lv| current_price > lv))
+            .count() as u8;
 
         let macro_bias = match price_above_count {
             0..=1 => MacroBias::Bearish,
@@ -120,6 +122,7 @@ impl MacroTracker {
             gc_2w_midline: gc_2w_mid,
             gc_1w_lower_band: gc_1w_lower,
             ichimoku_weekly_baseline: baseline,
+            levels_ready,
             price_above_count,
             macro_bias,
             current_price,
@@ -200,7 +203,7 @@ async fn macro_tracker_main(
             Vec::new()
         }
     };
-    let candles_1w = match fetch_bitget_candles(http, symbol, "1W", "52").await {
+    let mut candles_1w = match fetch_bitget_candles(http, symbol, "1W", "52").await {
         Ok(c) => c,
         Err(e) => {
             log::error!("MacroTracker: 1W fetch error: {e}");
@@ -249,6 +252,10 @@ async fn macro_tracker_main(
     live_1w.sort_by_key(|b| b.time);
 
     // --- 5. Aggregate live 1W → 2W, filter to new bars only ---
+    // Sort ascending so or_insert captures the chronologically first bar's open
+    // and and_modify always sees the latest close last.
+    candles_1w.sort_by_key(|c| c.timestamp);
+
     let mut buckets: BTreeMap<i64, Bar> = BTreeMap::new();
     for c in candles_1w.iter() {
         let t = match Utc.timestamp_millis_opt(c.timestamp).single() {
@@ -287,9 +294,10 @@ async fn macro_tracker_main(
     let snapshot = tracker.snapshot(current_price);
 
     info!(
-        "MacroTracker: price={:.0} above={}/5 bias={:?} | ema1d={:.0?} ema2w={:.0?} gc2w={:.0?} gc1w_lower={:.0?} kijun={:.0?}",
+        "MacroTracker: price={:.0} above={}/5 ready={}/5 bias={:?} | ema1d={:.0?} ema2w={:.0?} gc2w={:.0?} gc1w_lower={:.0?} kijun={:.0?}",
         snapshot.current_price,
         snapshot.price_above_count,
+        snapshot.levels_ready,
         snapshot.macro_bias,
         snapshot.daily_ema_200,
         snapshot.ema_2w_50,
@@ -297,6 +305,14 @@ async fn macro_tracker_main(
         snapshot.gc_1w_lower_band,
         snapshot.ichimoku_weekly_baseline,
     );
+
+    if snapshot.levels_ready < 5 {
+        log::info!(
+            "MacroTracker: only {}/5 levels ready — skipping Redis write until all converge",
+            snapshot.levels_ready
+        );
+        return;
+    }
 
     let serialized = match serde_json::to_string(&snapshot) {
         Ok(s) => s,

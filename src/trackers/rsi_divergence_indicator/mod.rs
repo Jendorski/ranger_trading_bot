@@ -45,13 +45,17 @@
 //! Pass explicit parameters via [`RsiDivEngine::new`] when the timeframe
 //! differs from 5m/15m.
 
-#![allow(dead_code)]
-
 use std::collections::VecDeque;
+use std::sync::Arc;
+use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
+use log::info;
+use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
+use tokio::time;
 
+use crate::exchange::bitget::fetch_bitget_candles;
 use super::rsi_core::RsiCore;
 use super::smart_money_concepts::Bar;
 
@@ -132,6 +136,26 @@ pub enum RsiDivEvent {
 // Internal state
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Snapshot — written to Redis by the loop
+// ---------------------------------------------------------------------------
+
+/// Divergence events detected over the most recent live-delta bars.
+///
+/// Empty `events` means no divergence was confirmed in the current tick.
+/// Consumers should check both the events list and `updated_at` to determine
+/// whether a signal is still fresh.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RsiDivSnapshot {
+    pub timeframe: String,
+    pub events: Vec<RsiDivEvent>,
+    pub updated_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
+// Internal state
+// ---------------------------------------------------------------------------
+
 /// One slot in the pivot-detection rolling window.
 ///
 /// Bundling all three fields into a single struct means the window is a single
@@ -144,13 +168,12 @@ struct WindowEntry {
     global_idx: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct PivotRecord {
     rsi: f64,
     /// `low` for pivot lows, `high` for pivot highs
     price: f64,
     bar_index: usize,
-    time: DateTime<Utc>,
 }
 
 // ---------------------------------------------------------------------------
@@ -173,6 +196,7 @@ const PIVOT_MEMORY: usize = 3;
 /// Default Pine Script parameters:
 /// - `len = 14`, `lb_left = 5`, `lb_right = 5`
 /// - `range_lower = 5`, `range_upper = 60`
+#[derive(Clone)]
 pub struct RsiDivEngine {
     // Config
     lb_left: usize,
@@ -342,7 +366,6 @@ impl RsiDivEngine {
                 rsi: cand_rsi,
                 price: cand_bar.low,
                 bar_index: cand_global,
-                time: cand_bar.time,
             });
             if self.pivot_lows.len() > PIVOT_MEMORY {
                 self.pivot_lows.pop_front();
@@ -398,7 +421,6 @@ impl RsiDivEngine {
                 rsi: cand_rsi,
                 price: cand_bar.high,
                 bar_index: cand_global,
-                time: cand_bar.time,
             });
             if self.pivot_highs.len() > PIVOT_MEMORY {
                 self.pivot_highs.pop_front();
@@ -406,6 +428,138 @@ impl RsiDivEngine {
         }
 
         events
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Background loop
+// ---------------------------------------------------------------------------
+
+/// Seed-and-live RSI divergence loop for any directly-accessible Bitget timeframe.
+///
+/// Warms up [`RsiDivEngine`] on `seed_bars` once at startup, then on every
+/// tick fetches the live delta from Bitget, replays it through a clone of the
+/// warmed engine, and writes a [`RsiDivSnapshot`] containing the events emitted
+/// by the delta bars to `redis_key`.
+///
+/// Only events from the **live delta** are recorded — historical divergences
+/// from the seed are intentionally discarded. Consumers check `events` and
+/// `updated_at` to determine whether a divergence is currently active.
+#[allow(clippy::too_many_arguments)]
+pub async fn rsi_div_loop(
+    mut conn: redis::aio::MultiplexedConnection,
+    http: Arc<reqwest::Client>,
+    symbol: Arc<str>,
+    seed_bars: Arc<Vec<Bar>>,
+    bitget_tf: &'static str,
+    live_count: u32,
+    interval_secs: u64,
+    redis_key: &'static str,
+) {
+    let seed_cutoff = seed_bars.iter().map(|b| b.time).max();
+    let mut seed_engine = RsiDivEngine::default_params()
+        .with_rsi_filter(Some(60.0), Some(40.0));
+    for bar in seed_bars.iter().cloned() {
+        seed_engine.process_bar(bar);
+    }
+    drop(seed_bars);
+
+    info!("RSI-Div-{bitget_tf}: seed warmup complete");
+
+    let mut interval = time::interval(Duration::from_secs(interval_secs));
+    loop {
+        interval.tick().await;
+        rsi_div_main(
+            &mut conn,
+            &http,
+            &symbol,
+            &seed_engine,
+            seed_cutoff,
+            bitget_tf,
+            live_count,
+            interval_secs,
+            redis_key,
+        )
+        .await;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn rsi_div_main(
+    conn: &mut redis::aio::MultiplexedConnection,
+    http: &reqwest::Client,
+    symbol: &str,
+    seed_engine: &RsiDivEngine,
+    seed_cutoff: Option<DateTime<Utc>>,
+    bitget_tf: &str,
+    live_count: u32,
+    interval_secs: u64,
+    redis_key: &str,
+) {
+    // --- 1. Fetch live candles ---
+    let live_candles =
+        match fetch_bitget_candles(http, symbol, bitget_tf, &live_count.to_string()).await {
+            Ok(c) => c,
+            Err(e) => {
+                log::error!("RSI-Div-{bitget_tf}: fetch error: {e}");
+                Vec::new()
+            }
+        };
+
+    // --- 2. Build live delta: bars strictly newer than seed, sorted ascending ---
+    let mut live_bars: Vec<Bar> = live_candles
+        .into_iter()
+        .filter_map(|c| {
+            let t = Utc.timestamp_millis_opt(c.timestamp).single()?;
+            if seed_cutoff.is_none_or(|cutoff| t > cutoff) {
+                Some(Bar {
+                    time: t,
+                    open: c.open,
+                    high: c.high,
+                    low: c.low,
+                    close: c.close,
+                    volume: Some(c.volume),
+                    volume_quote: Some(c.quote_volume),
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+    live_bars.sort_by_key(|b| b.time);
+
+    // --- 3. Clone warmed state, replay delta, collect events ---
+    let mut engine = seed_engine.clone();
+    let mut events: Vec<RsiDivEvent> = Vec::new();
+    for bar in live_bars {
+        events.extend(engine.process_bar(bar));
+    }
+
+    info!(
+        "RSI-Div-{bitget_tf}: {} divergence event(s) in live delta",
+        events.len()
+    );
+
+    let snapshot = RsiDivSnapshot {
+        timeframe: bitget_tf.to_string(),
+        events,
+        updated_at: Utc::now(),
+    };
+
+    let serialized = match serde_json::to_string(&snapshot) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("RSI-Div-{bitget_tf}: serialisation error: {e}");
+            return;
+        }
+    };
+
+    let ttl = (interval_secs * 2) as usize;
+    if let Err(e) = conn
+        .set_ex::<_, _, ()>(redis_key, serialized, ttl)
+        .await
+    {
+        log::error!("RSI-Div-{bitget_tf}: Redis write failed: {e}");
     }
 }
 

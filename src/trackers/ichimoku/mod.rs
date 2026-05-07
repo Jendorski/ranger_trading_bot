@@ -58,34 +58,55 @@ pub async fn ichimoku_loop(redis_conn: MultiplexedConnection) -> Result<()> {
     loop {
         interval.tick().await;
 
-        //let url = url.to_string();
-        let result = tokio::task::spawn_blocking(move || {
+        // Step 1: Download — abort this tick on any failure.
+        match tokio::task::spawn_blocking(move || {
             download_large_file(url, "data/btcusd_1-min_data.zip")
         })
-        .await;
-
-        match result {
-            Ok(Err(e)) => {
-                eprintln!("CRITICAL ERROR in ichimoku_loop: {e:?}");
-                eprintln!("Retrying in {loop_interval_seconds} seconds...");
-            }
+        .await
+        {
             Err(e) => {
-                eprintln!("Task Join Error: {e:?}");
+                log::error!("Ichimoku: download task panicked: {e}");
+                continue;
             }
-            _ => {}
+            Ok(Err(e)) => {
+                log::error!("Ichimoku: download failed: {e:#} — retrying in {loop_interval_seconds}s");
+                continue;
+            }
+            Ok(Ok(())) => {}
         }
 
-        let _extract_weekly = tokio::task::spawn_blocking(move || {
+        // Step 2: Extract 1-min CSV → weekly candles — abort this tick on failure.
+        match tokio::task::spawn_blocking(|| {
             Helper::extract_into_weekly_candle(
                 "data/btcusd_1-min_data.csv",
                 "data/btcusd_weekly_data.csv",
             )
         })
-        .await;
+        .await
+        {
+            Err(e) => {
+                log::error!("Ichimoku: extraction task panicked: {e}");
+                continue;
+            }
+            Ok(Err(e)) => {
+                log::error!("Ichimoku: weekly extraction failed: {e:#} — retrying in {loop_interval_seconds}s");
+                continue;
+            }
+            Ok(Ok(())) => {}
+        }
 
+        // Step 3: Compute Ichimoku and write to Redis.
         let ichimoku_conn = redis_conn.clone();
-        let _process_weekly_ichimoku =
-            tokio::task::spawn(async move { process_weekly_ichimoku(ichimoku_conn).await }).await;
+        match tokio::task::spawn(async move { process_weekly_ichimoku(ichimoku_conn).await }).await
+        {
+            Err(e) => {
+                log::error!("Ichimoku: process task panicked: {e}");
+            }
+            Ok(Err(e)) => {
+                log::error!("Ichimoku: process_weekly_ichimoku failed: {e:#}");
+            }
+            Ok(Ok(())) => {}
+        }
     }
 }
 

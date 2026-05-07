@@ -25,20 +25,6 @@ impl Ema {
         self.value = Some(v);
         v
     }
-    // pub fn update(&mut self, price: f64) -> f64 {
-    //     match self.value {
-    //         None => {
-    //             self.value = Some(price);
-    //             price
-    //         }
-    //         Some(prev_ema) => {
-    //             let ema = (price * self.k) + (prev_ema * (1.0 - self.k));
-
-    //             self.value = Some(ema);
-    //             ema
-    //         }
-    //     }
-    // }
 
     pub fn current(&self) -> Option<f64> {
         self.value
