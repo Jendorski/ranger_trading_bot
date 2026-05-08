@@ -185,6 +185,45 @@ pub async fn spawn_background_tasks(
         crate::regime::macro_tracker_loop(conn, h, sym, s1d, s1w, s2w, 14400).await;
     });
 
+    // 4H RSI divergence — Strength gate; 300 candles; refresh every 15 minutes
+    let (conn, h, sym, s4h) = (
+        redis_conn.clone(),
+        Arc::clone(&http),
+        Arc::clone(&symbol),
+        Arc::clone(&seed_4h),
+    );
+    task_set.spawn(async move {
+        trackers::rsi_divergence_indicator::rsi_div_loop(
+            conn, h, sym, s4h, "4H", "300", "trading_bot:rsi_div:4H", 900,
+        )
+        .await;
+    });
+
+    // 1D RSI divergence — higher-TF confirmation; 200 candles; refresh every 2 hours
+    let (conn, h, sym, s1d_div) = (
+        redis_conn.clone(),
+        Arc::clone(&http),
+        Arc::clone(&symbol),
+        Arc::clone(&seed_1d),
+    );
+    task_set.spawn(async move {
+        trackers::rsi_divergence_indicator::rsi_div_loop(
+            conn, h, sym, s1d_div, "1D", "200", "trading_bot:rsi_div:1D", 7200,
+        )
+        .await;
+    });
+
+    // GaussianChannel 3D — macro regime filter (BullIntact / Transitioning / BearIntact); refresh every 3 hours
+    let (conn, h, sym, s3d) = (
+        redis_conn.clone(),
+        Arc::clone(&http),
+        Arc::clone(&symbol),
+        Arc::clone(&seed_3d),
+    );
+    task_set.spawn(async move {
+        crate::regime::gaussian_3d_loop(conn, h, sym, s3d, 10800).await;
+    });
+
     task_set.spawn(async move {
         let app = api::create_router(redis_conn);
         let listener = tokio::net::TcpListener::bind("0.0.0.0:4545")
