@@ -1,3 +1,402 @@
+# 9th May 2026 Implementation Plan
+
+---
+
+## Goal
+
+Replace arithmetic SL placement with structurally-derived levels anchored to the SMC zone that triggered entry. Add dynamic SL tightening during the trade based on SST signals. Two layers: initial placement (at entry) and dynamic tightening (on each price poll while in position).
+
+---
+
+## SL Pillar Map — Current State
+
+| Layer | Signal | Data available? | Wired? |
+|-------|--------|-----------------|--------|
+| **Initial** | Financial risk cap (`margin × risk_pct`) | Yes | Yes — `stop_loss_price()` |
+| **Initial** | SMC zone structural anchor (`zone.high` / `zone.low`) | Yes — `trading_bot:zones` | No |
+| **Tighten** | RSI Bullish divergence 4H (selling pressure weakening) | Yes — `trading_bot:rsi_div:4H` | No |
+| **Tighten** | VRVP HVN above current price (buyers defending) | Yes — `trading_bot:vrvp:4H` | No |
+| **Exit** | 4H BullishBOS while short (structural reversal) | Yes — `trading_bot:trend_state` | No |
+
+---
+
+## Task 1 — `StructuralSlLevel` type + `compute_initial_sl`
+
+**New file:** `src/bot/structural_sl.rs`
+
+### `SlSource` enum
+
+```rust
+pub enum SlSource {
+    SmcZone { zone_high: f64, zone_low: f64 },
+    FinancialFallback,
+}
+```
+
+### `StructuralSlLevel`
+
+```rust
+pub struct StructuralSlLevel {
+    pub price: f64,
+    pub source: SlSource,
+}
+```
+
+### `compute_initial_sl`
+
+```rust
+pub fn compute_initial_sl(
+    entry_price: f64,
+    pos: Position,
+    triggering_zone: &Zone,
+    financial_sl: f64,         // output of existing stop_loss_price()
+    buffer_multiplier: f64,    // e.g. 0.5 — fraction of zone width used as buffer
+) -> StructuralSlLevel
+```
+
+**Logic for `Position::Short`:**
+
+```
+zone_width   = triggering_zone.high - triggering_zone.low
+buffer       = zone_width × buffer_multiplier
+structural   = triggering_zone.high + buffer
+
+// Never risk more than the financial cap
+sl_price = max(financial_sl, structural)
+
+if structural <= financial_sl:
+    source = SmcZone { zone_high, zone_low }
+else:
+    source = FinancialFallback   // structural was too wide, financial cap wins
+```
+
+**Logic for `Position::Long`:** mirror — `zone.low - buffer`, `min(financial_sl, structural)`.
+
+**Why `max` not just structural?**
+The zone anchor can be wider than the financial risk cap (e.g. a wide supply zone). The financial cap is the hard ceiling on loss; structural is the preferred level when it fits inside that cap.
+
+---
+
+## Task 2 — Wire into entry path
+
+**File:** `src/bot/mod.rs`
+
+The triggering zone is already in scope in the entry path (the `zone` variable from the `find()` call). Pass it into `compute_initial_sl` alongside the existing financial SL:
+
+```
+// existing
+let sl = Helper::stop_loss_price(entry_price, margin, leverage, risk_pct, pos);
+
+// replace with
+let financial_sl = Helper::stop_loss_price(entry_price, margin, leverage, risk_pct, pos);
+let structural_sl = compute_initial_sl(
+    entry_price,
+    pos,
+    zone,                          // already in scope
+    Helper::decimal_to_f64(financial_sl),
+    config.sl_buffer_multiplier,   // new config key, default 0.5
+);
+self.open_pos.sl = Some(Helper::f64_to_decimal(structural_sl.price));
+```
+
+**New config key to add in `src/config/mod.rs`:**
+`SL_BUFFER_MULTIPLIER` — `f64`, default `0.5`.
+
+**Logging:**
+```
+INFO  Structural SL (short): zone_high=79650 buffer=92 → sl=79742  [SmcZone]
+INFO  Structural SL (short): financial cap hit → sl=80652           [FinancialFallback]
+```
+
+---
+
+## Task 3 — `evaluate_sl_tighten` — dynamic tightening
+
+**File:** `src/bot/structural_sl.rs`
+
+Called on each price poll while `pos != Flat`, after the partial profit check.
+
+```rust
+pub async fn evaluate_sl_tighten(
+    conn: &mut MultiplexedConnection,
+    current_price: f64,
+    current_sl: f64,
+    entry_price: f64,
+    pos: Position,
+) -> Option<f64>   // Some(new_sl) if tighten warranted, None if no change
+```
+
+### Signal 1 — RSI Bullish divergence on 4H (while short)
+
+Read `trading_bot:rsi_div:4H`. If any `RegularBullish` or `HiddenBullish` event is present:
+
+```
+// Find nearest VRVP 4H HVN above current_price — tighten SL to just above it
+candidate_sl = nearest_hvn_above_price(vrvp_4h, current_price).price_high + small_buffer
+
+// Only ever tighten, never widen
+if candidate_sl < current_sl:
+    return Some(candidate_sl)
+```
+
+### Signal 2 — VRVP 4H HVN directly above price (while short)
+
+Read `trading_bot:vrvp:4H`. If current price is within one bin width below an HVN's `price_low`:
+
+```
+// Price is approaching an HVN from below — buyers are defending above
+candidate_sl = hvn.price_high + small_buffer
+
+if candidate_sl < current_sl:
+    return Some(candidate_sl)
+```
+
+### Signal 3 — 4H BullishBOS while short (hard exit)
+
+Read `trading_bot:trend_state`. If `direction == Bullish` and `last_bos_time > entry_time`:
+
+```
+// Structural basis for the short is gone — exit immediately
+return Some(current_price)   // sentinel: caller treats this as close-now
+```
+
+**Caller logic in `bot/mod.rs`:**
+
+```rust
+if let Some(new_sl) = evaluate_sl_tighten(&mut conn, price, current_sl, entry, pos).await {
+    if new_sl == current_price {
+        warn!("StructuralSL: 4H BullishBOS while short — immediate exit");
+        // close position
+    } else {
+        self.open_pos.sl = Some(Helper::f64_to_decimal(new_sl));
+        exchange.modify_market_order(&self.open_pos).await?;
+        warn!("StructuralSL: tightened to {new_sl:.2}");
+    }
+}
+```
+
+---
+
+## Task 4 — `nearest_hvn_above_price` / `nearest_hvn_below_price` helpers
+
+**File:** `src/bot/structural_sl.rs` (shared with TP plan — move to a common location if both plans are built together)
+
+```rust
+pub fn nearest_hvn_above_price(profile: &VrvpProfile, price: f64) -> Option<&VrvpNode>
+pub fn nearest_hvn_below_price(profile: &VrvpProfile, price: f64) -> Option<&VrvpNode>
+```
+
+Simple filter + sort on `profile.nodes`. Also needed by the TP plan (Task 2 there reads VRVP HVNs from the same profile).
+
+---
+
+## Priority order
+
+| # | Task | File |
+|---|------|------|
+| 1 | `StructuralSlLevel` + `compute_initial_sl` | `src/bot/structural_sl.rs` (new) |
+| 2 | Wire initial SL into entry path + `SL_BUFFER_MULTIPLIER` config | `src/bot/mod.rs`, `src/config/mod.rs` |
+| 3 | `evaluate_sl_tighten` — RSI div + VRVP signals | `src/bot/structural_sl.rs` |
+| 4 | Hard exit on 4H BullishBOS while short | `src/bot/mod.rs` |
+| 5 | `nearest_hvn_above/below_price` helpers (shared with TP plan) | `src/bot/structural_sl.rs` |
+
+---
+
+## What stays unchanged
+
+- `stop_loss_price()` — kept as the financial cap input to `compute_initial_sl`
+- `ssl_hit()` — unchanged, still the trigger check on each poll
+- SL stepping as TPs are hit (`target.sl`) — unchanged
+
+---
+
+# 9th May 2026 — Structural TP Plan
+
+---
+
+## Goal
+
+Replace the arithmetic TP ladder with levels anchored to real structural price levels: SMC long zones and VRVP HVN nodes below entry (for shorts), above entry (for longs). The fraction ladder and SL-stepping logic stay unchanged — only the target prices change.
+
+---
+
+## TP Pillar Map — Current State
+
+| Source | Data available? | Used for TP? |
+|--------|-----------------|--------------|
+| Nearest SMC zone distance ÷ 4 (arithmetic) | Yes | Yes — current behaviour |
+| All SMC zones between entry and target | Yes — `trading_bot:zones` | No |
+| VRVP 4H HVN nodes | Yes — `trading_bot:vrvp:4H` | No |
+| VRVP 1D HVN nodes | Yes — `trading_bot:vrvp:1D` | No |
+
+---
+
+## Current flow (to be replaced)
+
+```
+store_partial_profit_targets(entry, pos)
+  → determine_profit_difference()      ← finds nearest zone only
+  → total_distance ÷ 4 = step
+  → [entry-step, entry-2step, entry-3step, entry-4step]   ← arithmetic
+```
+
+---
+
+## Target flow
+
+```
+store_partial_profit_targets(entry, pos)
+  → collect_structural_tp_levels(conn, entry, pos)         ← NEW
+      reads: trading_bot:zones  (SMC long/short zones)
+      reads: trading_bot:vrvp:4H  (nearby HVNs)
+      reads: trading_bot:vrvp:1D  (farther HVNs)
+      → merges, deduplicates, sorts nearest-first
+      → returns up to 4 StructuralTpLevel
+  → < 4 found: pad remainder with arithmetic fallback
+  → 0 found:   full arithmetic fallback (existing behaviour preserved)
+  → build_profit_targets_structural(levels, fractions, entry, margin, leverage)
+```
+
+---
+
+## Task 1 — `StructuralTpLevel` type
+
+**New file:** `src/bot/structural_tp.rs`
+
+```rust
+pub enum TpSource {
+    SmcZone,
+    VrvpHvn { timeframe: String },
+}
+
+pub struct StructuralTpLevel {
+    pub price: f64,
+    pub source: TpSource,
+    pub distance_from_entry: f64,
+}
+```
+
+---
+
+## Task 2 — `collect_structural_tp_levels`
+
+**File:** `src/bot/structural_tp.rs`
+
+```rust
+pub async fn collect_structural_tp_levels(
+    conn: &mut MultiplexedConnection,
+    entry_price: f64,
+    pos: Position,
+    min_distance: f64,    // reuse smc_min_distance to deduplicate overlapping levels
+    max_levels: usize,    // 4
+) -> Vec<StructuralTpLevel>
+```
+
+**Logic for `Position::Short` (mirror for Long):**
+
+1. **SMC zones** — read `trading_bot:zones`, take `long_zones` where `zone.high < entry_price`. Use `zone.high` as the TP price (top of the demand zone — where buyers are expected to first push back).
+
+2. **VRVP 4H HVNs** — read `trading_bot:vrvp:4H`, filter `nodes` where `node_type == HighVolumeNode` and `bin.price_mid < entry_price`. Use `bin.price_mid` as the TP price.
+
+3. **VRVP 1D HVNs** — same as above from `trading_bot:vrvp:1D`, for levels that are further from entry.
+
+4. **Merge + deduplicate** — if an SMC zone and a VRVP HVN are within `min_distance` of each other, keep only one (prefer SMC zone). A coincident SMC + HVN means double confirmation; log it.
+
+5. **Sort nearest-first**, take up to `max_levels`.
+
+---
+
+## Task 3 — `build_profit_targets_structural`
+
+**File:** `src/helper/mod.rs` — add alongside existing `build_profit_targets`
+
+Same fraction ladder (`[0.20, 0.30, 0.30, 0.20]`) and same SL-stepping logic. Only `tp_prices` change — sourced from `StructuralTpLevel.price` instead of arithmetic steps.
+
+```rust
+pub fn build_profit_targets_structural(
+    levels: Vec<StructuralTpLevel>,   // sorted nearest-first, max 4
+    entry_price: Decimal,
+    margin: Decimal,
+    leverage: Decimal,
+    pos: Position,
+    fallback_step: Decimal,           // ranger_price_difference, for padding
+) -> Vec<PartialProfitTarget>
+```
+
+**Padding rule:** if only 2 structural levels found, TP3 and TP4 are arithmetic from the last structural level using `fallback_step`.
+
+---
+
+## Task 4 — Wire into `store_partial_profit_targets`
+
+**File:** `src/bot/mod.rs`
+
+```rust
+let structural_levels = collect_structural_tp_levels(
+    &mut self.redis_conn,
+    entry_price,
+    pos,
+    self.config.smc_min_distance,
+    4,
+).await;
+
+let ppt = if structural_levels.is_empty() {
+    // full arithmetic fallback — existing behaviour unchanged
+    Helper::build_profit_targets(
+        dec_entry_price, current_margin, dec_leverage,
+        dec_ranger_price_difference, pos,
+    )
+} else {
+    Helper::build_profit_targets_structural(
+        structural_levels,
+        dec_entry_price,
+        current_margin,
+        dec_leverage,
+        pos,
+        Decimal::from_f64(self.config.ranger_price_difference).unwrap(),
+    )
+};
+```
+
+---
+
+## Task 5 — Logging per level with source
+
+```
+INFO  TP1 @ 79100.00 ← SMC long zone [79050–79150]
+INFO  TP2 @ 78800.00 ← VRVP 4H HVN (mid=78800, vol=1204.3)
+INFO  TP3 @ 78400.00 ← VRVP 1D HVN (mid=78400) + SMC zone [78350–78450]  (double confirmation)
+INFO  TP4 @ 78050.00 ← arithmetic fallback (no structural level found)
+```
+
+---
+
+## Priority order
+
+| # | Task | File |
+|---|------|------|
+| 1 | `StructuralTpLevel` + `collect_structural_tp_levels` | `src/bot/structural_tp.rs` (new) |
+| 2 | `build_profit_targets_structural` | `src/helper/mod.rs` |
+| 3 | Wire into `store_partial_profit_targets` | `src/bot/mod.rs` |
+| 4 | Logging per level with source | `src/bot/mod.rs` |
+
+---
+
+## What stays unchanged
+
+- Fraction ladder: `[0.20, 0.30, 0.30, 0.20]`
+- SL-stepping logic as each TP is hit
+- `determine_profit_difference` — kept as the arithmetic fallback path
+- `build_profit_targets` — kept, called when 0 structural levels found
+
+---
+
+## Shared helpers with SL plan
+
+`nearest_hvn_above_price` / `nearest_hvn_below_price` are needed by both plans. Build them once in `src/bot/structural_sl.rs` and import from `structural_tp.rs`.
+
+---
+
 # 8th May 2026 Implementation plan
 
 ---

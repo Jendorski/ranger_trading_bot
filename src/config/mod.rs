@@ -46,8 +46,11 @@ pub struct Config {
 
     pub margin: f64,
 
+    /// Maximum leverage cap — position sizing is driven by zone SL + risk_pct,
+    /// not by this value directly. This caps qty so notional ≤ margin × leverage.
     pub leverage: f64,
 
+    #[allow(dead_code)]
     pub risk_pct: f64,
 
     pub ranger_risk_pct: f64,
@@ -73,6 +76,9 @@ pub struct Config {
     pub bitunix_api_secret: String,
     pub bitunix_maker_fee: f64,
     pub bitunix_taker_fee: f64,
+
+    /// Fraction of zone width added as a buffer above/below the zone boundary for SL placement.
+    pub sl_buffer_multiplier: f64,
 }
 
 #[allow(dead_code)]
@@ -152,7 +158,7 @@ impl Config {
         let smc_zone_multiplier = env::var("SMC_ZONE_MULTIPLIER")
             .ok()
             .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(0.00075);
+            .unwrap_or(0.005);
 
         let smc_min_distance = env::var("SMC_MIN_DISTANCE")
             .ok()
@@ -182,6 +188,11 @@ impl Config {
             .and_then(|v| v.parse::<f64>().ok())
             .unwrap_or(0.0005);
 
+        let sl_buffer_multiplier = env::var("SL_BUFFER_MULTIPLIER")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.5);
+
         Ok(Config {
             api_key,
             api_secret,
@@ -208,6 +219,7 @@ impl Config {
             bitunix_api_secret,
             bitunix_maker_fee,
             bitunix_taker_fee,
+            sl_buffer_multiplier,
         })
     }
 }

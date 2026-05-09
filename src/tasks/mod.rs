@@ -89,11 +89,9 @@ pub async fn spawn_background_tasks(
     }
 
     if cfg.use_ichimoku_indicator {
-        let conn = redis_conn.clone();
+        let (conn, h, sym) = (redis_conn.clone(), Arc::clone(&http), Arc::clone(&symbol));
         task_set.spawn(async move {
-            if let Err(e) = trackers::ichimoku::ichimoku_loop(conn).await {
-                log::error!("Ichimoku tracker error: {e}");
-            }
+            trackers::ichimoku::ichimoku_loop(conn, h, sym, 14400).await;
         });
     }
 

@@ -533,7 +533,7 @@ async fn rsi_div_main(
         }
     };
 
-    let ttl = (interval_secs * 4) as usize;
+    let ttl = (interval_secs * 2) as usize;
     if let Err(e) = conn.set_ex::<_, _, ()>(redis_key, serialized, ttl).await {
         log::error!("RsiDiv [{timeframe}]: Redis write failed: {e}");
         return;

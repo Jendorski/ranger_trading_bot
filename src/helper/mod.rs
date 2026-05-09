@@ -14,6 +14,7 @@ use std::fs::File;
 use std::path::Path;
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct InputCandle {
     #[serde(rename = "Timestamp")]
     timestamp: f64,
@@ -170,6 +171,35 @@ impl Helper {
         position_size / entry_price
     }
 
+    /// Returns the BTC quantity whose SL hit equals exactly `margin × risk_pct`.
+    ///
+    /// `max_leverage` caps the result so the notional never exceeds `margin × max_leverage`,
+    /// preventing tiny SL distances (misconfigured zone multiplier) from generating
+    /// implicitly high leverage.
+    pub fn risk_anchored_qty(
+        entry: Decimal,
+        sl: Decimal,
+        margin: Decimal,
+        risk_pct: Decimal,
+        max_leverage: Decimal,
+    ) -> Decimal {
+        let sl_delta = (entry - sl).abs();
+        if sl_delta.is_zero() || entry.is_zero() || margin.is_zero() {
+            return dec!(0);
+        }
+        let risk_amount = margin * risk_pct;
+        let qty = risk_amount / sl_delta;
+        let max_qty = (margin * max_leverage) / entry;
+        if qty > max_qty {
+            log::warn!(
+                "risk_anchored_qty: computed qty {qty:.6} exceeds max_leverage cap {max_qty:.6} — capping"
+            );
+            max_qty
+        } else {
+            qty
+        }
+    }
+
     /// Returns **true** iff the supplied `DateTime<Utc>` is exactly midnight (00:00).
     pub fn is_midnight() -> bool {
         let now = Local::now();
@@ -211,6 +241,7 @@ impl Helper {
         (val * 10.0).trunc() / 10.0
     }
 
+    #[allow(dead_code)]
     pub fn stop_loss_price(
         entry_price: Decimal,
         margin: Decimal,
@@ -333,9 +364,8 @@ impl Helper {
             let next_sl = if is_last {
                 None
             } else if i == 0 {
-                // After TP1 → SL moves to entry
-                let sl_one = (entry_price + tp_prices[i]) / dec!(2.0);
-                Some(sl_one)
+                // After TP1 → SL moves to entry (break-even)
+                Some(entry_price)
             } else {
                 // After TPn → SL moves to previous TP price
                 Some(tp_prices[i - 1])
@@ -366,6 +396,7 @@ impl Helper {
         Helper::f64_to_decimal(multiplier.clamp(0.5, 1.5))
     }
 
+    #[allow(dead_code)]
     pub fn extract_into_weekly_candle(path: &str, output_path: &str) -> Result<()> {
         println!("Reading {path}...");
         if !Path::new(path).exists() {
@@ -489,6 +520,7 @@ impl Helper {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn read_candles_from_csv(file_path: &str) -> Result<Vec<Candle>, Box<dyn Error>> {
         let file = File::open(file_path)?;
         let mut rdr = csv::Reader::from_reader(file);

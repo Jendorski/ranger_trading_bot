@@ -555,10 +555,11 @@ pub fn parse_timeframe_to_channel(timeframe: &str) -> Result<String> {
         "4h" => "candle4H",
         "12h" => "candle12H",
         "1d" => "candle1D",
+        "3d" => "candle3D",
         "1w" => "candle1W",
         _ => {
             return Err(anyhow::anyhow!(
-                "Invalid timeframe: {}. Valid options: 1m, 5m, 15m, 30m, 1h, 4h, 12h, 1d, 1w",
+                "Invalid timeframe: {}. Valid options: 1m, 5m, 15m, 30m, 1h, 4h, 12h, 1d, 3d, 1w",
                 timeframe
             ))
         }
