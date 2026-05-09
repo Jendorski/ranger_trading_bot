@@ -32,7 +32,10 @@ use futures_util::StreamExt;
 
 //pub mod scalper;
 
+pub mod confluence;
 pub mod zones;
+
+use confluence::ConfluenceGate;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Position {
@@ -1115,6 +1118,12 @@ impl<'a> Bot<'a> {
                         return Ok(());
                     }
 
+                    let gate = ConfluenceGate::read(&mut self.redis_conn).await;
+                    if !gate.permits_long() {
+                        return Ok(());
+                    }
+                    let size_mod = gate.size_modifier_long();
+
                     info!("Ranger Entering LONG at {price:.2} in zone {zone:?}");
                     let _: () = Self::delete_partial_profit_target(self).await?;
 
@@ -1129,13 +1138,15 @@ impl<'a> Bot<'a> {
                     let _: Result<()> =
                         Self::store_partial_profit_targets(self, price, self.pos).await;
 
+                    let combined_multiplier =
+                        funding_multiplier * Helper::f64_to_decimal(size_mod);
                     self.open_pos = Self::prepare_open_position(
                         self,
                         self.pos,
                         dec_price,
                         Helper::f64_to_decimal(self.config.leverage),
                         Helper::f64_to_decimal(self.config.ranger_risk_pct),
-                        funding_multiplier,
+                        combined_multiplier,
                     )
                     .await;
 
@@ -1180,6 +1191,12 @@ impl<'a> Bot<'a> {
                         return Ok(());
                     }
 
+                    let gate = ConfluenceGate::read(&mut self.redis_conn).await;
+                    if !gate.permits_short() {
+                        return Ok(());
+                    }
+                    let size_mod = gate.size_modifier_short();
+
                     info!("Ranger Entering SHORT at {price:.2} in zone {zone:?}");
                     let _: () = Self::delete_partial_profit_target(self).await?;
 
@@ -1194,13 +1211,15 @@ impl<'a> Bot<'a> {
                     let _: Result<()> =
                         Self::store_partial_profit_targets(self, price, self.pos).await;
 
+                    let combined_multiplier =
+                        funding_multiplier * Helper::f64_to_decimal(size_mod);
                     self.open_pos = Self::prepare_open_position(
                         self,
                         Position::Short,
                         dec_price,
                         Helper::f64_to_decimal(self.config.leverage),
                         Helper::f64_to_decimal(self.config.ranger_risk_pct),
-                        funding_multiplier,
+                        combined_multiplier,
                     )
                     .await;
 

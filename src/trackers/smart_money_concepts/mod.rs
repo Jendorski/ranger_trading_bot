@@ -7,7 +7,7 @@ use tokio::time;
 use crate::bot::zones::{Side, Zone, Zones};
 use crate::config::Config;
 use crate::exchange::bitget::{self, Candle, CandleData, HttpCandleData};
-use crate::helper::TRADING_BOT_ZONES;
+use crate::helper::{TRADING_BOT_TREND_STATE, TRADING_BOT_ZONES};
 use chrono::TimeZone;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -85,6 +85,39 @@ pub enum SMCEvent {
         index: usize,
     }, // Sweep high followed by bearish BOS (SHORT)
 }
+
+// ---------------------------------------------------------------------------
+// Trend state
+// ---------------------------------------------------------------------------
+
+/// Macro trend direction derived from the most recent Break of Structure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TrendDirection {
+    /// Last BOS was bullish — higher high broken to the upside.
+    Bullish,
+    /// Last BOS was bearish — lower low broken to the downside.
+    Bearish,
+    /// No BOS observed yet in the current candle window.
+    Neutral,
+}
+
+/// Written to Redis after every SMC tick. Consumers use `direction` as the
+/// entry-timeframe trend gate before opening a position.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrendState {
+    pub direction: TrendDirection,
+    /// Price level of the most recent BOS, if any.
+    pub last_bos_level: Option<f64>,
+    /// Bar time of the most recent BOS, if any.
+    pub last_bos_time: Option<DateTime<Utc>>,
+    /// Timeframe the SMC engine ran on (e.g. `"4H"`).
+    pub timeframe: String,
+    pub updated_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
+// Internal engine state
+// ---------------------------------------------------------------------------
 
 /// Pending sweep low paired with the pivot high that was active when the sweep was detected.
 /// Snapshotting the reference pivot high prevents the BOS check from failing when
@@ -455,18 +488,22 @@ async fn smc_main(conn: &mut redis::aio::MultiplexedConnection, config: &Config)
 
     let mut sweep_lows: Vec<Zone> = Vec::new();
     let mut sweep_highs: Vec<Zone> = Vec::new();
+    let mut last_bullish_bos: Option<(f64, DateTime<Utc>)> = None;
+    let mut last_bearish_bos: Option<(f64, DateTime<Utc>)> = None;
 
     for b in sample_bars {
         let events = eng.process_bar(b);
         for ev in events {
-            //println!("{}", serde_json::to_string(&ev).unwrap());
             match ev {
-                SMCEvent::StrongLow {
-                    price,
-                    time: _,
-                    index: _,
-                } => {
-                    //sweep_lows.push(SMCEvent::StrongLow { price, time, index });
+                SMCEvent::BullishBOS { level, time, .. } => {
+                    info!("SMC BullishBOS: level={level:.2} time={time} tf={}", config.smc_timeframe);
+                    last_bullish_bos = Some((level, time));
+                }
+                SMCEvent::BearishBOS { level, time, .. } => {
+                    info!("SMC BearishBOS: level={level:.2} time={time} tf={}", config.smc_timeframe);
+                    last_bearish_bos = Some((level, time));
+                }
+                SMCEvent::StrongLow { price, .. } => {
                     let low_low = price - (price * config.smc_zone_multiplier);
                     sweep_lows.push(Zone {
                         low: low_low,
@@ -474,12 +511,7 @@ async fn smc_main(conn: &mut redis::aio::MultiplexedConnection, config: &Config)
                         side: Side::Long,
                     });
                 }
-                SMCEvent::StrongHigh {
-                    price,
-                    time: _,
-                    index: _,
-                } => {
-                    //sweep_highs.push(SMCEvent::StrongHigh { price, time, index });
+                SMCEvent::StrongHigh { price, .. } => {
                     let high_high = price + (price * config.smc_zone_multiplier);
                     sweep_highs.push(Zone {
                         low: price,
@@ -491,6 +523,61 @@ async fn smc_main(conn: &mut redis::aio::MultiplexedConnection, config: &Config)
             }
         }
     }
+
+    // Resolve trend direction from whichever BOS is most recent.
+    let trend_state = match (last_bullish_bos, last_bearish_bos) {
+        (Some((b_level, b_time)), Some((r_level, r_time))) => {
+            if b_time >= r_time {
+                TrendState {
+                    direction: TrendDirection::Bullish,
+                    last_bos_level: Some(b_level),
+                    last_bos_time: Some(b_time),
+                    timeframe: config.smc_timeframe.clone(),
+                    updated_at: Utc::now(),
+                }
+            } else {
+                TrendState {
+                    direction: TrendDirection::Bearish,
+                    last_bos_level: Some(r_level),
+                    last_bos_time: Some(r_time),
+                    timeframe: config.smc_timeframe.clone(),
+                    updated_at: Utc::now(),
+                }
+            }
+        }
+        (Some((level, time)), None) => TrendState {
+            direction: TrendDirection::Bullish,
+            last_bos_level: Some(level),
+            last_bos_time: Some(time),
+            timeframe: config.smc_timeframe.clone(),
+            updated_at: Utc::now(),
+        },
+        (None, Some((level, time))) => TrendState {
+            direction: TrendDirection::Bearish,
+            last_bos_level: Some(level),
+            last_bos_time: Some(time),
+            timeframe: config.smc_timeframe.clone(),
+            updated_at: Utc::now(),
+        },
+        (None, None) => TrendState {
+            direction: TrendDirection::Neutral,
+            last_bos_level: None,
+            last_bos_time: None,
+            timeframe: config.smc_timeframe.clone(),
+            updated_at: Utc::now(),
+        },
+    };
+
+    info!(
+        "TrendState: {:?} @ {:?} (tf={})",
+        trend_state.direction, trend_state.last_bos_level, trend_state.timeframe
+    );
+
+    let serialized_trend = serde_json::to_string(&trend_state).unwrap();
+    let _: () = conn
+        .set(TRADING_BOT_TREND_STATE, serialized_trend)
+        .await
+        .unwrap();
 
     let (filtered_highs, filtered_lows) =
         remove_conflicting_zones(sweep_highs, sweep_lows, config.smc_min_distance);

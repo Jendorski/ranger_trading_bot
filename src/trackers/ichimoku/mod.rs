@@ -1,7 +1,8 @@
 use anyhow::Result;
 use redis::aio::MultiplexedConnection;
 use redis::AsyncCommands;
-use serde::Serialize;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use tokio::time;
 
 use std::collections::{HashMap, VecDeque};
@@ -12,7 +13,7 @@ use std::time::Duration;
 
 use crate::exchange::bitget::Candle;
 use crate::helper::Helper;
-use crate::helper::{LAST_25_WEEKLY_ICHIMOKU_SPANS, WEEKLY_CANDLES, WEEKLY_ICHIMOKU};
+use crate::helper::{LAST_25_WEEKLY_ICHIMOKU_SPANS, TRADING_BOT_ICHIMOKU_CROSS, WEEKLY_CANDLES, WEEKLY_ICHIMOKU};
 
 // #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 // pub enum TenkanKijunCross {
@@ -256,6 +257,38 @@ fn get_last_25_spans(
     (span_a[start_a..].to_vec(), span_b[start_b..].to_vec())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IchimokuCrossState {
+    KijunAboveSpanB,
+    KijunBelowSpanB,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IchimokuCrossSnapshot {
+    pub state: IchimokuCrossState,
+    pub updated_at: DateTime<Utc>,
+}
+
+fn detect_kijun_spanb_state(ichimoku: &Ichimoku) -> Option<IchimokuCrossState> {
+    let kijun = &ichimoku.base_line;
+    let span_b = &ichimoku.leading_span_b;
+
+    // Walk backward to find the most recent bar where both values are valid.
+    // base_line[i] = Kijun at bar i.
+    // leading_span_b[i] = SpanB projected to bar i (computed from candles[i-26]).
+    // Both at the same index i represent the same point in time.
+    for i in (0..kijun.len()).rev() {
+        if let (Some(k), Some(s)) = (kijun[i], span_b[i]) {
+            return Some(if k >= s {
+                IchimokuCrossState::KijunAboveSpanB
+            } else {
+                IchimokuCrossState::KijunBelowSpanB
+            });
+        }
+    }
+    None
+}
+
 async fn process_weekly_ichimoku(mut redis_conn: MultiplexedConnection) -> Result<()> {
     let weekly_candles = Helper::read_candles_from_csv("data/btcusd_weekly_data.csv").unwrap();
     let serde_weekly_candles = serde_json::to_string(&weekly_candles).unwrap();
@@ -280,6 +313,15 @@ async fn process_weekly_ichimoku(mut redis_conn: MultiplexedConnection) -> Resul
     let _: () = redis_conn
         .set(LAST_25_WEEKLY_ICHIMOKU_SPANS, serde_last_25_spans)
         .await?;
+
+    if let Some(state) = detect_kijun_spanb_state(&weekly_ichimoku) {
+        let snapshot = IchimokuCrossSnapshot {
+            state,
+            updated_at: Utc::now(),
+        };
+        let serialized = serde_json::to_string(&snapshot).unwrap();
+        let _: () = redis_conn.set(TRADING_BOT_ICHIMOKU_CROSS, serialized).await?;
+    }
 
     Ok(())
 }

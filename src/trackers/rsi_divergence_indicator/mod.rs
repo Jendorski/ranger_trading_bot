@@ -48,10 +48,16 @@
 #![allow(dead_code)]
 
 use std::collections::VecDeque;
+use std::sync::Arc;
+use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
+use log::info;
+use redis::{aio::MultiplexedConnection, AsyncCommands};
 use serde::{Deserialize, Serialize};
+use tokio::time;
 
+use crate::exchange::bitget::fetch_bitget_candles;
 use super::rsi_core::RsiCore;
 use super::smart_money_concepts::Bar;
 
@@ -173,6 +179,7 @@ const PIVOT_MEMORY: usize = 3;
 /// Default Pine Script parameters:
 /// - `len = 14`, `lb_left = 5`, `lb_right = 5`
 /// - `range_lower = 5`, `range_upper = 60`
+#[derive(Clone)]
 pub struct RsiDivEngine {
     // Config
     lb_left: usize,
@@ -407,6 +414,132 @@ impl RsiDivEngine {
 
         events
     }
+}
+
+// ---------------------------------------------------------------------------
+// Redis snapshot
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RsiDivSnapshot {
+    pub timeframe: String,
+    pub events: Vec<RsiDivEvent>,
+    pub updated_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
+// Live loop
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::too_many_arguments)]
+pub async fn rsi_div_loop(
+    mut conn: MultiplexedConnection,
+    http: Arc<reqwest::Client>,
+    symbol: Arc<str>,
+    seed_bars: Arc<Vec<Bar>>,
+    timeframe: &'static str,
+    candle_count: &'static str,
+    redis_key: &'static str,
+    interval_secs: u64,
+) {
+    let seed_cutoff = seed_bars.iter().map(|b| b.time).max();
+
+    let mut seed_engine = RsiDivEngine::default_params()
+        .with_rsi_filter(Some(60.0), Some(40.0));
+    for bar in seed_bars.iter() {
+        seed_engine.process_bar(bar.clone());
+    }
+    drop(seed_bars);
+
+    info!("RsiDiv [{timeframe}]: seed warmup complete");
+
+    let mut interval = time::interval(Duration::from_secs(interval_secs));
+    loop {
+        interval.tick().await;
+        rsi_div_main(
+            &mut conn,
+            &http,
+            &symbol,
+            &seed_engine,
+            seed_cutoff,
+            timeframe,
+            candle_count,
+            redis_key,
+            interval_secs,
+        )
+        .await;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn rsi_div_main(
+    conn: &mut MultiplexedConnection,
+    http: &reqwest::Client,
+    symbol: &str,
+    seed_engine: &RsiDivEngine,
+    seed_cutoff: Option<DateTime<Utc>>,
+    timeframe: &str,
+    candle_count: &str,
+    redis_key: &str,
+    interval_secs: u64,
+) {
+    let candles = match fetch_bitget_candles(http, symbol, timeframe, candle_count).await {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("RsiDiv [{timeframe}]: fetch error: {e}");
+            return;
+        }
+    };
+
+    let mut live: Vec<Bar> = candles
+        .iter()
+        .filter_map(|c| {
+            let t = Utc.timestamp_millis_opt(c.timestamp).single()?;
+            if seed_cutoff.is_none_or(|cut| t > cut) {
+                Some(Bar {
+                    time: t,
+                    open: c.open,
+                    high: c.high,
+                    low: c.low,
+                    close: c.close,
+                    volume: Some(c.volume),
+                    volume_quote: Some(c.quote_volume),
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+    live.sort_by_key(|b| b.time);
+
+    let mut engine = seed_engine.clone();
+    let mut all_events: Vec<RsiDivEvent> = Vec::new();
+    for bar in live {
+        all_events.extend(engine.process_bar(bar));
+    }
+
+    let event_count = all_events.len();
+    let snapshot = RsiDivSnapshot {
+        timeframe: timeframe.to_string(),
+        events: all_events,
+        updated_at: Utc::now(),
+    };
+
+    let serialized = match serde_json::to_string(&snapshot) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("RsiDiv [{timeframe}]: serialisation error: {e}");
+            return;
+        }
+    };
+
+    let ttl = (interval_secs * 4) as usize;
+    if let Err(e) = conn.set_ex::<_, _, ()>(redis_key, serialized, ttl).await {
+        log::error!("RsiDiv [{timeframe}]: Redis write failed: {e}");
+        return;
+    }
+
+    info!("RsiDiv [{timeframe}]: wrote {event_count} events to {redis_key}");
 }
 
 // ---------------------------------------------------------------------------

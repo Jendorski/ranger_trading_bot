@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tokio::time;
 
 use crate::exchange::bitget::fetch_bitget_candles;
-use crate::helper::TRADING_BOT_MACRO_TRACKER;
+use crate::helper::{TRADING_BOT_GAUSSIAN_3D, TRADING_BOT_MACRO_TRACKER};
 use crate::trackers::ema::Ema;
 use crate::trackers::gaussian::GaussianChannel;
 use crate::trackers::ichimoku::IchimokuBaseline;
@@ -47,6 +47,25 @@ pub struct MacroTrackerSnapshot {
     /// How many of the 5 levels the current price is trading above (0–5)
     pub price_above_count: u8,
     pub macro_bias: MacroBias,
+    pub current_price: f64,
+    pub updated_at: DateTime<Utc>,
+}
+
+// ─── Gaussian Channel 3D ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GaussianRegime3D {
+    BullIntact,
+    BearIntact,
+    Transitioning,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GaussianRegime3DSnapshot {
+    pub regime: GaussianRegime3D,
+    pub upper: f64,
+    pub lower: f64,
+    pub midline: f64,
     pub current_price: f64,
     pub updated_at: DateTime<Utc>,
 }
@@ -324,6 +343,127 @@ fn candle_to_bar(t: DateTime<Utc>, c: &crate::exchange::bitget::Candle) -> Bar {
         close: c.close,
         volume: Some(c.volume),
         volume_quote: Some(c.quote_volume),
+    }
+}
+
+// ─── Gaussian Channel 3D loop ─────────────────────────────────────────────────
+
+pub async fn gaussian_3d_loop(
+    mut conn: redis::aio::MultiplexedConnection,
+    http: Arc<reqwest::Client>,
+    symbol: Arc<str>,
+    seed_3d: Arc<Vec<Bar>>,
+    interval_secs: u64,
+) {
+    let seed_cutoff = seed_3d.iter().map(|b| b.time).max();
+
+    let mut seed_gc = GaussianChannel::new(GC_POLES, GC_SAMPLING, GC_MULTIPLIER);
+    for bar in seed_3d.iter() {
+        seed_gc.update(bar.high, bar.low, bar.close);
+    }
+    drop(seed_3d);
+
+    info!(
+        "GaussianChannel3D: warmup complete — midline={:?} upper={:?} lower={:?}",
+        seed_gc.midline, seed_gc.upper_band, seed_gc.lower_band,
+    );
+
+    let mut interval = time::interval(Duration::from_secs(interval_secs));
+    loop {
+        interval.tick().await;
+        gaussian_3d_main(&mut conn, &http, &symbol, &seed_gc, seed_cutoff, interval_secs).await;
+    }
+}
+
+async fn gaussian_3d_main(
+    conn: &mut redis::aio::MultiplexedConnection,
+    http: &reqwest::Client,
+    symbol: &str,
+    seed_gc: &GaussianChannel,
+    seed_cutoff: Option<DateTime<Utc>>,
+    interval_secs: u64,
+) {
+    let candles = match fetch_bitget_candles(http, symbol, "3D", "100").await {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("GaussianChannel3D: fetch error: {e}");
+            return;
+        }
+    };
+
+    let current_price = candles
+        .iter()
+        .max_by_key(|c| c.timestamp)
+        .map(|c| c.close)
+        .unwrap_or(0.0);
+
+    if current_price == 0.0 {
+        log::warn!("GaussianChannel3D: no current price, skipping tick");
+        return;
+    }
+
+    let mut live: Vec<Bar> = candles
+        .iter()
+        .filter_map(|c| {
+            let t = Utc.timestamp_millis_opt(c.timestamp).single()?;
+            if seed_cutoff.is_none_or(|cut| t > cut) {
+                Some(candle_to_bar(t, c))
+            } else {
+                None
+            }
+        })
+        .collect();
+    live.sort_by_key(|b| b.time);
+
+    let mut gc = seed_gc.clone();
+    for bar in &live {
+        gc.update(bar.high, bar.low, bar.close);
+    }
+
+    let (upper, lower, midline) = match (gc.upper_band, gc.lower_band, gc.midline) {
+        (Some(u), Some(l), Some(m)) => (u, l, m),
+        _ => {
+            log::warn!("GaussianChannel3D: channel not ready yet");
+            return;
+        }
+    };
+
+    let regime = if current_price > upper {
+        GaussianRegime3D::BullIntact
+    } else if current_price < lower {
+        GaussianRegime3D::BearIntact
+    } else {
+        GaussianRegime3D::Transitioning
+    };
+
+    info!(
+        "GaussianChannel3D: price={:.0} regime={:?} upper={:.0} lower={:.0} mid={:.0}",
+        current_price, regime, upper, lower, midline,
+    );
+
+    let snapshot = GaussianRegime3DSnapshot {
+        regime,
+        upper,
+        lower,
+        midline,
+        current_price,
+        updated_at: Utc::now(),
+    };
+
+    let serialized = match serde_json::to_string(&snapshot) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("GaussianChannel3D: serialisation error: {e}");
+            return;
+        }
+    };
+
+    let ttl = (interval_secs * 2) as usize;
+    if let Err(e) = conn
+        .set_ex::<_, _, ()>(TRADING_BOT_GAUSSIAN_3D, serialized, ttl)
+        .await
+    {
+        log::error!("GaussianChannel3D: Redis write failed: {e}");
     }
 }
 
