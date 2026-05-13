@@ -14,6 +14,7 @@ use std::fs::File;
 use std::path::Path;
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct InputCandle {
     #[serde(rename = "Timestamp")]
     timestamp: f64,
@@ -170,6 +171,35 @@ impl Helper {
         position_size / entry_price
     }
 
+    /// Returns the BTC quantity whose SL hit equals exactly `margin × risk_pct`.
+    ///
+    /// `max_leverage` caps the result so the notional never exceeds `margin × max_leverage`,
+    /// preventing tiny SL distances (misconfigured zone multiplier) from generating
+    /// implicitly high leverage.
+    pub fn risk_anchored_qty(
+        entry: Decimal,
+        sl: Decimal,
+        margin: Decimal,
+        risk_pct: Decimal,
+        max_leverage: Decimal,
+    ) -> Decimal {
+        let sl_delta = (entry - sl).abs();
+        if sl_delta.is_zero() || entry.is_zero() || margin.is_zero() {
+            return dec!(0);
+        }
+        let risk_amount = margin * risk_pct;
+        let qty = risk_amount / sl_delta;
+        let max_qty = (margin * max_leverage) / entry;
+        if qty > max_qty {
+            log::warn!(
+                "risk_anchored_qty: computed qty {qty:.6} exceeds max_leverage cap {max_qty:.6} — capping"
+            );
+            max_qty
+        } else {
+            qty
+        }
+    }
+
     /// Returns **true** iff the supplied `DateTime<Utc>` is exactly midnight (00:00).
     pub fn is_midnight() -> bool {
         let now = Local::now();
@@ -211,6 +241,7 @@ impl Helper {
         (val * 10.0).trunc() / 10.0
     }
 
+    #[allow(dead_code)]
     pub fn stop_loss_price(
         entry_price: Decimal,
         margin: Decimal,
@@ -288,29 +319,17 @@ impl Helper {
 
     pub fn build_profit_targets(
         entry_price: Decimal,
-        margin: Decimal,
-        leverage: Decimal,
+        total_size: Decimal,
         ranger_price_difference: Decimal,
         pos: Position,
     ) -> Vec<PartialProfitTarget> {
-        // BTC precision (e.g. 5 or 6)
         let size_precision: u32 = 5;
-
         let tp_counts: usize = 4;
         let tp_prices: Vec<Decimal> =
             Helper::tp_prices(ranger_price_difference, entry_price, tp_counts, pos);
 
         let fractions: &[Decimal] = &[dec!(0.20), dec!(0.30), dec!(0.30), dec!(0.20)];
-
-        // Total notional
-        let notional = margin * leverage;
-
-        // Total position size in BTC
-        let total_size = if entry_price.is_zero() {
-            dec!(0.00)
-        } else {
-            (notional / entry_price).round_dp(size_precision)
-        };
+        let total_size = total_size.round_dp(size_precision);
 
         let mut remaining = total_size;
         let mut ladder = Vec::with_capacity(tp_prices.len());
@@ -333,9 +352,8 @@ impl Helper {
             let next_sl = if is_last {
                 None
             } else if i == 0 {
-                // After TP1 → SL moves to entry
-                let sl_one = (entry_price + tp_prices[i]) / dec!(2.0);
-                Some(sl_one)
+                // After TP1 → SL moves to entry (break-even)
+                Some(entry_price)
             } else {
                 // After TPn → SL moves to previous TP price
                 Some(tp_prices[i - 1])
@@ -366,6 +384,7 @@ impl Helper {
         Helper::f64_to_decimal(multiplier.clamp(0.5, 1.5))
     }
 
+    #[allow(dead_code)]
     pub fn extract_into_weekly_candle(path: &str, output_path: &str) -> Result<()> {
         println!("Reading {path}...");
         if !Path::new(path).exists() {
@@ -489,6 +508,7 @@ impl Helper {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn read_candles_from_csv(file_path: &str) -> Result<Vec<Candle>, Box<dyn Error>> {
         let file = File::open(file_path)?;
         let mut rdr = csv::Reader::from_reader(file);
@@ -538,13 +558,118 @@ mod tests {
 
     #[test]
     fn test_build_profit_targets_zero_price() {
+        // total_size zero when entry price is zero → all rungs zero
         let targets = Helper::build_profit_targets(
             dec!(0.00),
-            dec!(100.0),
-            dec!(20.0),
+            dec!(0.00),
             dec!(1000.0),
             Position::Long,
         );
         assert!(targets.is_empty() || targets.iter().all(|t| t.size_btc.is_zero()));
+    }
+
+    // ── TP ladder sizing coherence ────────────────────────────────────────────
+    //
+    // Regression: build_profit_targets used to recompute total_size from
+    // margin × leverage / entry instead of using the caller-supplied qty.
+    // When the confluence size_modifier reduces effective margin (e.g. 0.25×),
+    // the recomputed total_size was 4× larger than the actual placed qty,
+    // causing TP1 to attempt closing 80 % of the position instead of 20 %.
+
+    #[test]
+    fn test_build_profit_targets_ladder_sums_to_total_size() {
+        // Simulates 4/4 confluence signals (size_mod=1.0, no funding skew).
+        // total_size = risk_anchored_qty result (caller computes and passes in).
+        let total_size = dec!(0.003684); // e.g. 7x cap at $95k with $50 margin
+        let entry = dec!(95000.0);
+        let step = dec!(2000.0);
+
+        let targets = Helper::build_profit_targets(entry, total_size, step, Position::Long);
+
+        assert_eq!(targets.len(), 4);
+
+        let sum: rust_decimal::Decimal = targets.iter().map(|t| t.size_btc).sum();
+        // Sum of all rungs must equal total_size (last rung absorbs rounding).
+        assert_eq!(sum, total_size.round_dp(5));
+
+        // TP prices must be strictly ascending for a long.
+        let prices: Vec<_> = targets.iter().map(|t| t.target_price).collect();
+        assert!(prices.windows(2).all(|w| w[1] > w[0]));
+    }
+
+    #[test]
+    fn test_build_profit_targets_reduced_size_mod() {
+        // Simulates 1/4 confluence signals (size_mod=0.25): actual position is
+        // 4× smaller than the unmodified margin × leverage / entry would compute.
+        //
+        // Bug: old code used margin × leverage / entry = 0.003684 regardless of
+        // size_mod, so TP1 would close 20% × 0.003684 = 0.000737 BTC of an
+        // actual 0.000921 BTC position — that's 80% of the real position at TP1.
+        //
+        // Fix: caller passes actual_qty; ladder fractions apply to that directly.
+        let actual_qty   = dec!(0.000921); // cap-limited qty with 0.25× margin
+        let inflated_qty = dec!(0.003684); // what the bug computed (bare margin×leverage/entry)
+
+        let entry = dec!(95000.0);
+        let step  = dec!(2000.0);
+
+        // With fix: ladder built on actual_qty.
+        let targets = Helper::build_profit_targets(entry, actual_qty, step, Position::Long);
+
+        let sum: rust_decimal::Decimal = targets.iter().map(|t| t.size_btc).sum();
+        assert_eq!(sum, actual_qty.round_dp(5), "rungs must sum to actual position size");
+
+        // TP1 closes exactly 20% of actual_qty.
+        let expected_tp1 = (actual_qty * dec!(0.20))
+            .round_dp_with_strategy(5, rust_decimal::RoundingStrategy::ToZero);
+        assert_eq!(targets[0].size_btc, expected_tp1);
+
+        // Bug confirmation: inflated TP1 would close far more than intended 20%.
+        let inflated_tp1 = (inflated_qty * dec!(0.20))
+            .round_dp_with_strategy(5, rust_decimal::RoundingStrategy::ToZero);
+        let inflated_pct_of_actual = inflated_tp1 / actual_qty;
+        assert!(
+            inflated_pct_of_actual > dec!(0.75),
+            "bug: inflated TP1 closes {:.0}% of actual position, not 20%",
+            inflated_pct_of_actual * dec!(100)
+        );
+    }
+
+    #[test]
+    fn test_build_profit_targets_short_ladder() {
+        // Mirror test for shorts: TP prices strictly descending, sizes sum correctly.
+        let total_size = dec!(0.003684);
+        let entry = dec!(95000.0);
+        let step = dec!(2000.0);
+
+        let targets = Helper::build_profit_targets(entry, total_size, step, Position::Short);
+
+        assert_eq!(targets.len(), 4);
+
+        let sum: rust_decimal::Decimal = targets.iter().map(|t| t.size_btc).sum();
+        assert_eq!(sum, total_size.round_dp(5));
+
+        let prices: Vec<_> = targets.iter().map(|t| t.target_price).collect();
+        assert!(prices.windows(2).all(|w| w[1] < w[0]));
+    }
+
+    #[test]
+    fn test_build_profit_targets_sl_stepping() {
+        // After TP1: SL steps to entry (break-even).
+        // After TP2+: SL steps to previous TP price.
+        let total_size = dec!(0.003684);
+        let entry = dec!(95000.0);
+        let step = dec!(2000.0);
+
+        let targets = Helper::build_profit_targets(entry, total_size, step, Position::Long);
+
+        // TP1 SL → entry (break-even)
+        assert_eq!(targets[0].sl, Some(entry));
+        // TP2 SL → TP1 price
+        assert_eq!(targets[1].sl, Some(targets[0].target_price));
+        // TP3 SL → TP2 price
+        assert_eq!(targets[2].sl, Some(targets[1].target_price));
+        // Last rung has no SL step (position fully closed)
+        assert_eq!(targets[3].sl, None);
     }
 }

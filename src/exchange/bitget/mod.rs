@@ -31,7 +31,7 @@ pub struct ApiResponse<T> {
     pub data: Option<T>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Candle {
     #[serde(deserialize_with = "deserialize_string_to_i64")]
     pub timestamp: i64,
@@ -163,6 +163,15 @@ pub trait FuturesCall {
     async fn new_futures_call(&self, open_position: &OpenPosition) -> Result<PlaceOrderData>;
 
     async fn modify_futures_order(&self, open_position: &OpenPosition) -> Result<PlaceOrderData>;
+
+    /// Place (or replace) a position-level SL/TP plan order on Bitget.
+    /// `hold_side`: "long" or "short".
+    async fn place_tpsl_order(
+        &self,
+        tp_price: Option<f64>,
+        sl_price: Option<f64>,
+        hold_side: &str,
+    ) -> Result<()>;
 }
 
 /// Fetches OHLCV candles from the Bitget public futures endpoint using a
@@ -191,6 +200,33 @@ pub async fn fetch_bitget_candles(
     response
         .data
         .ok_or_else(|| anyhow::anyhow!("Bitget returned ok code but null data in candles response"))
+}
+
+// ─── TPSL helpers ────────────────────────────────────────────────────────────
+
+/// Bitget V2 API uses "buy"/"sell" for `holdSide`, not "long"/"short".
+pub(crate) fn bitget_api_hold_side(hold_side: &str) -> &str {
+    match hold_side {
+        "long"  => "buy",
+        "short" => "sell",
+        other   => other,
+    }
+}
+
+/// Build the request body for `/api/v2/mix/order/place-tpsl-order` (loss_plan).
+/// `api_hold_side` must already be in Bitget form ("buy" or "sell").
+pub(crate) fn build_sl_tpsl_body(sl: f64, api_hold_side: &str) -> serde_json::Value {
+    serde_json::json!({
+        "symbol":       "BTCUSDT",
+        "productType":  "usdt-futures",
+        "marginCoin":   "USDT",
+        "planType":     "loss_plan",
+        "triggerPrice": Helper::truncate_to_1_dp(sl).to_string(),
+        "triggerType":  "mark_price",
+        "executePrice": "0",
+        "holdSide":     api_hold_side,
+        "rangeRate":    ""
+    })
 }
 
 /// Simple HTTP‑based mock of the `Exchange` trait – replace with your real SDK.
@@ -415,6 +451,59 @@ impl FuturesCall for HttpCandleData {
 
         Ok(order)
     }
+
+    async fn place_tpsl_order(
+        &self,
+        _tp_price: Option<f64>,
+        sl_price: Option<f64>,
+        hold_side: &str,
+    ) -> Result<()> {
+        let Some(sl) = sl_price else { return Ok(()); };
+
+        let api_key = &self.config.api_key;
+        let secret = &self.config.api_secret;
+        let passphrase = &self.config.passphrase;
+
+        let base_url = "https://api.bitget.com";
+        let path = "/api/v2/mix/order/place-tpsl-order";
+        let method = "POST";
+
+        let body_json = build_sl_tpsl_body(sl, bitget_api_hold_side(hold_side));
+
+        let body = body_json.to_string();
+        let timestamp = Utc::now().timestamp_millis().to_string();
+        let sign = encryption::bitget_sign(secret, &timestamp, method, path, None, Some(&body));
+
+        let client = Client::new();
+        let response = client
+            .post(format!("{base_url}{path}"))
+            .header("ACCESS-KEY", api_key)
+            .header("ACCESS-SIGN", sign)
+            .header("ACCESS-TIMESTAMP", &timestamp)
+            .header("ACCESS-PASSPHRASE", passphrase)
+            .header("Content-Type", "application/json")
+            .body(body)
+            .send()
+            .await?;
+
+        let response_txt = response.text().await?;
+        info!("place_tpsl_order response: {response_txt}");
+
+        let parsed: ApiResponse<serde_json::Value> =
+            serde_json::from_str(&response_txt).map_err(|e| {
+                anyhow::anyhow!("Failed to parse Bitget TPSL response: {e}, text: {response_txt}")
+            })?;
+
+        if parsed.code != "00000" {
+            log::warn!(
+                "Bitget place-tpsl-order failed ({hold_side}): {} — {}",
+                parsed.code,
+                parsed.msg
+            );
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -555,10 +644,11 @@ pub fn parse_timeframe_to_channel(timeframe: &str) -> Result<String> {
         "4h" => "candle4H",
         "12h" => "candle12H",
         "1d" => "candle1D",
+        "3d" => "candle3D",
         "1w" => "candle1W",
         _ => {
             return Err(anyhow::anyhow!(
-                "Invalid timeframe: {}. Valid options: 1m, 5m, 15m, 30m, 1h, 4h, 12h, 1d, 1w",
+                "Invalid timeframe: {}. Valid options: 1m, 5m, 15m, 30m, 1h, 4h, 12h, 1d, 3d, 1w",
                 timeframe
             ))
         }
@@ -827,5 +917,129 @@ mod tests {
 
         // Test invalid timeframe
         assert!(parse_timeframe_to_channel("invalid").is_err());
+    }
+
+    // ─── TPSL helpers ─────────────────────────────────────────────────────────
+
+    // holdSide translation — the reference project revealed the original bug:
+    // Bitget V2 expects "buy"/"sell" for holdSide, not "long"/"short".
+    // These tests guard against the regression.
+
+    #[test]
+    fn test_hold_side_long_maps_to_buy() {
+        assert_eq!(bitget_api_hold_side("long"), "buy");
+    }
+
+    #[test]
+    fn test_hold_side_short_maps_to_sell() {
+        assert_eq!(bitget_api_hold_side("short"), "sell");
+    }
+
+    #[test]
+    fn test_hold_side_passthrough_when_already_api_form() {
+        assert_eq!(bitget_api_hold_side("buy"), "buy");
+        assert_eq!(bitget_api_hold_side("sell"), "sell");
+    }
+
+    // Body field correctness — each field name mirrors an observation from
+    // the reference project that differed from a naive first implementation.
+
+    #[test]
+    fn test_tpsl_body_plan_type_is_loss_plan() {
+        let body = build_sl_tpsl_body(90_000.0, "buy");
+        assert_eq!(body["planType"].as_str().unwrap(), "loss_plan");
+    }
+
+    #[test]
+    fn test_tpsl_body_trigger_type_is_mark_price() {
+        let body = build_sl_tpsl_body(90_000.0, "buy");
+        assert_eq!(body["triggerType"].as_str().unwrap(), "mark_price");
+    }
+
+    #[test]
+    fn test_tpsl_body_product_type_is_lowercase() {
+        let body = build_sl_tpsl_body(90_000.0, "buy");
+        let pt = body["productType"].as_str().unwrap();
+        assert_eq!(pt, "usdt-futures");
+        // Guard: must NOT be the uppercase form that was used before the fix
+        assert_ne!(pt, "USDT-FUTURES");
+    }
+
+    #[test]
+    fn test_tpsl_body_long_hold_side_is_buy() {
+        // Caller converts "long" → "buy" before passing to build_sl_tpsl_body;
+        // verify the body stores exactly what was passed in.
+        let body = build_sl_tpsl_body(90_000.0, bitget_api_hold_side("long"));
+        assert_eq!(body["holdSide"].as_str().unwrap(), "buy");
+    }
+
+    #[test]
+    fn test_tpsl_body_short_hold_side_is_sell() {
+        let body = build_sl_tpsl_body(89_500.0, bitget_api_hold_side("short"));
+        assert_eq!(body["holdSide"].as_str().unwrap(), "sell");
+    }
+
+    #[test]
+    fn test_tpsl_body_trigger_price_is_a_parseable_string() {
+        // Verify triggerPrice serialises as a JSON string (not a number), and
+        // that it can be parsed back to f64.
+        let body = build_sl_tpsl_body(94_325.7, "buy");
+        let price_str = body["triggerPrice"]
+            .as_str()
+            .expect("triggerPrice must be a JSON string, not a number");
+        price_str
+            .parse::<f64>()
+            .expect("triggerPrice must be parseable as f64");
+    }
+
+    #[test]
+    fn test_tpsl_body_trigger_price_truncated_to_one_dp() {
+        // Helper::truncate_to_1_dp floors to 1 decimal place.
+        // 94325.75 → "94325.7" (floor), not "94325.8" (round).
+        let body = build_sl_tpsl_body(94_325.75, "sell");
+        let price_str = body["triggerPrice"].as_str().unwrap();
+        assert_eq!(price_str, "94325.7");
+    }
+
+    #[test]
+    fn test_tpsl_body_range_rate_is_empty_string() {
+        // Bitget requires rangeRate to be present (even empty) in the body.
+        let body = build_sl_tpsl_body(90_000.0, "buy");
+        assert_eq!(body["rangeRate"].as_str().unwrap(), "");
+    }
+
+    #[test]
+    fn test_tpsl_body_execute_price_is_zero_string() {
+        // executePrice = "0" means market execution when triggered.
+        let body = build_sl_tpsl_body(90_000.0, "buy");
+        assert_eq!(body["executePrice"].as_str().unwrap(), "0");
+    }
+
+    #[test]
+    fn test_tpsl_body_symbol_and_margin_coin() {
+        let body = build_sl_tpsl_body(90_000.0, "buy");
+        assert_eq!(body["symbol"].as_str().unwrap(), "BTCUSDT");
+        assert_eq!(body["marginCoin"].as_str().unwrap(), "USDT");
+    }
+
+    // ─── Similar cases: holdSide + body combined ──────────────────────────────
+
+    #[test]
+    fn test_full_pipeline_long_sl() {
+        // Simulate what place_tpsl_order does: translate "long" then build body.
+        let api_side = bitget_api_hold_side("long");
+        let body = build_sl_tpsl_body(88_000.0, api_side);
+        assert_eq!(body["holdSide"].as_str().unwrap(), "buy");
+        assert_eq!(body["planType"].as_str().unwrap(), "loss_plan");
+        assert_eq!(body["triggerType"].as_str().unwrap(), "mark_price");
+    }
+
+    #[test]
+    fn test_full_pipeline_short_sl() {
+        let api_side = bitget_api_hold_side("short");
+        let body = build_sl_tpsl_body(102_500.0, api_side);
+        assert_eq!(body["holdSide"].as_str().unwrap(), "sell");
+        assert_eq!(body["planType"].as_str().unwrap(), "loss_plan");
+        assert_eq!(body["triggerType"].as_str().unwrap(), "mark_price");
     }
 }

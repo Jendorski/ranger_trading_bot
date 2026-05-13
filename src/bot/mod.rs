@@ -8,7 +8,7 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use serde::{Deserialize, Serialize};
 use std::ops::Div;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use crate::bot::zones::ZoneGuard;
@@ -33,9 +33,11 @@ use futures_util::StreamExt;
 //pub mod scalper;
 
 pub mod confluence;
+pub mod structural_sl;
+pub mod structural_tp;
 pub mod zones;
 
-use confluence::ConfluenceGate;
+use confluence::{ConfluenceGate, GATE_WARMUP};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Position {
@@ -175,6 +177,9 @@ pub struct Bot<'a> {
     zone_guard: ZoneGuard,
 
     macro_guard: MacroGuard,
+
+    /// Instant the bot process started — used to determine when warm-up is complete.
+    startup: Instant,
 }
 
 impl<'a> Bot<'a> {
@@ -222,6 +227,7 @@ impl<'a> Bot<'a> {
             fees,
             zone_guard,
             macro_guard,
+            startup: Instant::now(),
         })
     }
 
@@ -287,18 +293,19 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn prepare_open_position(
         &mut self,
         pos: Position,
         entry_price: Decimal,
+        sl: Decimal,
+        qty: Decimal,
         leverage: Decimal,
         risk_pct: Decimal,
         funding_multiplier: Decimal,
     ) -> OpenPosition {
         let current_margin = self.current_margin * funding_multiplier;
 
-        let sl = Helper::stop_loss_price(entry_price, current_margin, leverage, risk_pct, pos);
-        let qty = Helper::contract_amount(entry_price, current_margin, leverage);
         let tp = self
             .partial_profit_target
             .last()
@@ -318,7 +325,7 @@ impl<'a> Bot<'a> {
             id: Uuid::new_v4(),
             pos,
             entry_price,
-            position_size: qty, //does the same thing as quantity :(
+            position_size: qty,
             entry_time: Utc::now(),
             tp: Some(tp),
             sl: Some(sl),
@@ -685,6 +692,13 @@ impl<'a> Bot<'a> {
         };
 
         warn!("NEW SL for LONG is: {:?}", target.sl);
+        if let Some(new_sl_dec) = target.sl {
+            let new_sl = Helper::decimal_to_f64(new_sl_dec);
+            let pid = self.open_pos.position_id.as_deref();
+            if let Err(e) = exchange.modify_tpsl(pid, Position::Long, None, Some(new_sl)).await {
+                warn!("StructuralSL: failed to sync TP-step SL to exchange (long): {e}");
+            }
+        }
         self.store_position(self.pos, &self.open_pos.clone())
             .await?;
         Ok(())
@@ -797,11 +811,16 @@ impl<'a> Bot<'a> {
             order_id: self.open_pos.order_id.clone(),
             position_id: self.open_pos.position_id.clone(),
         };
+        warn!("NEW SL for SHORT is: {:?}", target.sl);
+        if let Some(new_sl_dec) = target.sl {
+            let new_sl = Helper::decimal_to_f64(new_sl_dec);
+            let pid = self.open_pos.position_id.as_deref();
+            if let Err(e) = exchange.modify_tpsl(pid, Position::Short, None, Some(new_sl)).await {
+                warn!("StructuralSL: failed to sync TP-step SL to exchange (short): {e}");
+            }
+        }
         self.store_position(self.pos, &self.open_pos.clone())
             .await?;
-
-        warn!("NEW SL for SHORT is: {:?}", target.sl);
-
         Ok(())
     }
 
@@ -894,33 +913,54 @@ impl<'a> Bot<'a> {
     async fn store_partial_profit_targets(
         &mut self,
         entry_price: f64,
+        sl_price: f64,
         pos: Position,
+        total_size: Decimal,
     ) -> Result<()> {
         self.zones = Bot::load_zones(&mut self.redis_conn)
             .await
             .unwrap_or(Zones::default());
 
-        let price_difference = Self::determine_profit_difference(self, entry_price, pos);
-
-        let profit_count = 4.00;
-        let mut ranger_price_difference = self.config.ranger_price_difference;
-        if price_difference.is_finite() && price_difference != 0.00 {
-            ranger_price_difference = price_difference.div(profit_count);
-        }
-
-        let current_margin = self.current_margin;
-
         let dec_entry_price = Decimal::from_f64(entry_price).unwrap();
-        let dec_leverage = Decimal::from_f64(self.config.leverage).unwrap();
-        let dec_ranger_price_difference = Decimal::from_f64(ranger_price_difference).unwrap();
 
-        let ppt = Helper::build_profit_targets(
-            dec_entry_price,
-            current_margin,
-            dec_leverage,
-            dec_ranger_price_difference,
+        let structural_levels = structural_tp::collect_structural_tp_levels(
+            &mut self.redis_conn,
+            entry_price,
+            sl_price,
             pos,
-        );
+            self.config.smc_min_distance,
+            4,
+        )
+        .await;
+
+        let ppt = if structural_levels.is_empty() {
+            // No structural levels found — fall back to arithmetic spacing
+            let price_difference = Self::determine_profit_difference(self, entry_price, pos);
+            let profit_count = 4.00;
+            let mut ranger_price_difference = self.config.ranger_price_difference;
+            if price_difference.is_finite() && price_difference != 0.00 {
+                ranger_price_difference = price_difference.div(profit_count);
+            }
+            let dec_ranger_price_difference =
+                Decimal::from_f64(ranger_price_difference).unwrap();
+            info!("StructuralTP: no structural levels found — using arithmetic fallback");
+            Helper::build_profit_targets(
+                dec_entry_price,
+                total_size,
+                dec_ranger_price_difference,
+                pos,
+            )
+        } else {
+            let fallback_step =
+                Decimal::from_f64(self.config.ranger_price_difference).unwrap();
+            structural_tp::build_profit_targets_structural(
+                structural_levels,
+                dec_entry_price,
+                total_size,
+                pos,
+                fallback_step,
+            )
+        };
 
         self.partial_profit_target = ppt.clone();
 
@@ -1108,8 +1148,9 @@ impl<'a> Bot<'a> {
                     .long_zones
                     .iter()
                     .find(|z| price != 1.11 && z.contains(price))
+                    .copied()
                 {
-                    let zone_id = ZoneId::from_zone(zone);
+                    let zone_id = ZoneId::from_zone(&zone);
                     info!("Zone ID: {zone_id:?}");
 
                     let z_guard_trade_result = self.zone_guard.get_trade_result(zone_id).await;
@@ -1118,7 +1159,7 @@ impl<'a> Bot<'a> {
                         return Ok(());
                     }
 
-                    let gate = ConfluenceGate::read(&mut self.redis_conn).await;
+                    let gate = ConfluenceGate::read(&mut self.redis_conn, price, self.startup.elapsed() >= GATE_WARMUP).await;
                     if !gate.permits_long() {
                         return Ok(());
                     }
@@ -1127,23 +1168,42 @@ impl<'a> Bot<'a> {
                     info!("Ranger Entering LONG at {price:.2} in zone {zone:?}");
                     let _: () = Self::delete_partial_profit_target(self).await?;
 
-                    self.pos = Position::Long;
+                    let intended_pos = Position::Long;
 
                     let funding_rate = exchange.get_funding_rate().await.unwrap_or(0.0);
-                    let funding_multiplier = Helper::funding_multiplier(funding_rate, self.pos);
+                    let funding_multiplier =
+                        Helper::funding_multiplier(funding_rate, intended_pos);
                     info!(
                         "Funding-aware sizing: rate={funding_rate:.6}, multiplier={funding_multiplier:.2}"
                     );
 
-                    let _: Result<()> =
-                        Self::store_partial_profit_targets(self, price, self.pos).await;
-
                     let combined_multiplier =
                         funding_multiplier * Helper::f64_to_decimal(size_mod);
+                    let current_margin = self.current_margin * combined_multiplier;
+
+                    let sl_price = structural_sl::compute_initial_sl(
+                        intended_pos,
+                        &zone,
+                        self.config.sl_buffer_multiplier,
+                    );
+                    let dec_sl = Helper::f64_to_decimal(sl_price);
+                    let qty = Helper::risk_anchored_qty(
+                        dec_price,
+                        dec_sl,
+                        current_margin,
+                        Helper::f64_to_decimal(self.config.ranger_risk_pct),
+                        Helper::f64_to_decimal(self.config.leverage),
+                    );
+
+                    let _: Result<()> =
+                        Self::store_partial_profit_targets(self, price, sl_price, intended_pos, qty).await;
+
                     self.open_pos = Self::prepare_open_position(
                         self,
-                        self.pos,
+                        intended_pos,
                         dec_price,
+                        dec_sl,
+                        qty,
                         Helper::f64_to_decimal(self.config.leverage),
                         Helper::f64_to_decimal(self.config.ranger_risk_pct),
                         combined_multiplier,
@@ -1158,6 +1218,7 @@ impl<'a> Bot<'a> {
 
                     let exec_price: PlaceOrderData =
                         exchange.place_market_order(&self.open_pos).await?;
+                    self.pos = intended_pos;
                     info!("Ranger Long executed at {exec_price:?}");
 
                     if exec_price.client_oid == "Failed to place order" {
@@ -1180,8 +1241,9 @@ impl<'a> Bot<'a> {
                     .short_zones
                     .iter()
                     .find(|z| price != 1.11 && z.contains(price))
+                    .copied()
                 {
-                    let zone_id = ZoneId::from_zone(zone);
+                    let zone_id = ZoneId::from_zone(&zone);
                     info!("Zone ID: {zone_id:?}");
 
                     let z_guard_trade_result = self.zone_guard.get_trade_result(zone_id).await;
@@ -1191,7 +1253,7 @@ impl<'a> Bot<'a> {
                         return Ok(());
                     }
 
-                    let gate = ConfluenceGate::read(&mut self.redis_conn).await;
+                    let gate = ConfluenceGate::read(&mut self.redis_conn, price, self.startup.elapsed() >= GATE_WARMUP).await;
                     if !gate.permits_short() {
                         return Ok(());
                     }
@@ -1200,23 +1262,42 @@ impl<'a> Bot<'a> {
                     info!("Ranger Entering SHORT at {price:.2} in zone {zone:?}");
                     let _: () = Self::delete_partial_profit_target(self).await?;
 
-                    self.pos = Position::Short;
+                    let intended_pos = Position::Short;
 
                     let funding_rate = exchange.get_funding_rate().await.unwrap_or(0.0);
-                    let funding_multiplier = Helper::funding_multiplier(funding_rate, self.pos);
+                    let funding_multiplier =
+                        Helper::funding_multiplier(funding_rate, intended_pos);
                     info!(
                         "Funding-aware sizing: rate={funding_rate:.6}, multiplier={funding_multiplier:.2}"
                     );
 
-                    let _: Result<()> =
-                        Self::store_partial_profit_targets(self, price, self.pos).await;
-
                     let combined_multiplier =
                         funding_multiplier * Helper::f64_to_decimal(size_mod);
+                    let current_margin = self.current_margin * combined_multiplier;
+
+                    let sl_price = structural_sl::compute_initial_sl(
+                        intended_pos,
+                        &zone,
+                        self.config.sl_buffer_multiplier,
+                    );
+                    let dec_sl = Helper::f64_to_decimal(sl_price);
+                    let qty = Helper::risk_anchored_qty(
+                        dec_price,
+                        dec_sl,
+                        current_margin,
+                        Helper::f64_to_decimal(self.config.ranger_risk_pct),
+                        Helper::f64_to_decimal(self.config.leverage),
+                    );
+
+                    let _: Result<()> =
+                        Self::store_partial_profit_targets(self, price, sl_price, intended_pos, qty).await;
+
                     self.open_pos = Self::prepare_open_position(
                         self,
-                        Position::Short,
+                        intended_pos,
                         dec_price,
+                        dec_sl,
+                        qty,
                         Helper::f64_to_decimal(self.config.leverage),
                         Helper::f64_to_decimal(self.config.ranger_risk_pct),
                         combined_multiplier,
@@ -1231,6 +1312,7 @@ impl<'a> Bot<'a> {
 
                     let exec_price: PlaceOrderData =
                         exchange.place_market_order(&self.open_pos).await?;
+                    self.pos = intended_pos;
                     info!("Ranger Short executed at {exec_price:?}");
 
                     if exec_price.client_oid == "Failed to place order" {
@@ -1256,25 +1338,17 @@ impl<'a> Bot<'a> {
 
             Position::Long => {
                 //Trigger SL if it's met
-                let in_sl = Helper::stop_loss_price(
-                    self.open_pos.entry_price,
-                    Helper::f64_to_decimal(self.config.margin),
-                    Helper::f64_to_decimal(self.config.leverage),
-                    Helper::f64_to_decimal(self.config.risk_pct),
-                    Position::Long,
-                );
-                let ssl_hit =
-                    Helper::ssl_hit(dec_price, self.pos, self.open_pos.sl.unwrap_or(in_sl));
-
-                if ssl_hit {
-                    let _: () = Self::close_long_position(self, dec_price).await?;
-
-                    warn!(
-                        "SL for Ranger Long Position entered at {:2}, with SL triggered at {:2}",
-                        self.open_pos.entry_price, price
-                    );
-
-                    self.pos = Position::Flat;
+                if let Some(current_sl) = self.open_pos.sl {
+                    if Helper::ssl_hit(dec_price, self.pos, current_sl) {
+                        let _: () = Self::close_long_position(self, dec_price).await?;
+                        warn!(
+                            "SL for Ranger Long Position entered at {:2}, with SL triggered at {:2}",
+                            self.open_pos.entry_price, price
+                        );
+                        self.pos = Position::Flat;
+                    }
+                } else {
+                    warn!("open_pos.sl is None on Long position — SL check skipped");
                 }
 
                 // 2️⃣ Take‑profit: exit long when we hit the short zone.
@@ -1283,7 +1357,8 @@ impl<'a> Bot<'a> {
                 }
 
                 //Take partial profit if we hit a target
-                if !self.partial_profit_target.is_empty()
+                if self.pos == Position::Long
+                    && !self.partial_profit_target.is_empty()
                     && self
                         .partial_profit_target
                         .iter()
@@ -1291,29 +1366,48 @@ impl<'a> Bot<'a> {
                 {
                     let _ = Self::evaluate_long_partial_profit(self, price, exchange).await;
                 }
+
+                if self.pos == Position::Long {
+                    if let Some(current_sl) = self.open_pos.sl {
+                        match structural_sl::evaluate_sl_tighten(
+                            &mut self.redis_conn,
+                            price,
+                            Helper::decimal_to_f64(current_sl),
+                            self.open_pos.entry_time,
+                            self.pos,
+                        )
+                        .await
+                        {
+                            structural_sl::SlTightenResult::Tighten(new_sl) => {
+                                self.open_pos.sl = Some(Helper::f64_to_decimal(new_sl));
+                                let pid = self.open_pos.position_id.as_deref();
+                                if let Err(e) = exchange.modify_tpsl(pid, self.pos, None, Some(new_sl)).await {
+                                    warn!("StructuralSL: failed to sync tightened SL to exchange: {e}");
+                                }
+                            }
+                            structural_sl::SlTightenResult::ExitNow => {
+                                let _: () = Self::close_long_position(self, dec_price).await?;
+                                self.pos = Position::Flat;
+                            }
+                            structural_sl::SlTightenResult::NoChange => {}
+                        }
+                    }
+                }
             }
 
             Position::Short => {
                 //Trigger SL if it's met
-                let in_sl = Helper::stop_loss_price(
-                    self.open_pos.entry_price,
-                    Helper::f64_to_decimal(self.config.margin),
-                    Helper::f64_to_decimal(self.config.leverage),
-                    Helper::f64_to_decimal(self.config.risk_pct),
-                    Position::Short,
-                );
-                let ssl_hit =
-                    Helper::ssl_hit(dec_price, self.pos, self.open_pos.sl.unwrap_or(in_sl));
-
-                if ssl_hit {
-                    let _: () = Self::close_short_position(self, dec_price).await?;
-
-                    warn!(
-                        "SL for Ranger Short Position entered at {:2}, with SL triggered at {:2}",
-                        self.open_pos.entry_price, price
-                    );
-
-                    self.pos = Position::Flat;
+                if let Some(current_sl) = self.open_pos.sl {
+                    if Helper::ssl_hit(dec_price, self.pos, current_sl) {
+                        let _: () = Self::close_short_position(self, dec_price).await?;
+                        warn!(
+                            "SL for Ranger Short Position entered at {:2}, with SL triggered at {:2}",
+                            self.open_pos.entry_price, price
+                        );
+                        self.pos = Position::Flat;
+                    }
+                } else {
+                    warn!("open_pos.sl is None on Short position — SL check skipped");
                 }
 
                 // 3️⃣ Cover: exit short when we hit the long zone.
@@ -1322,13 +1416,41 @@ impl<'a> Bot<'a> {
                 }
 
                 //Take partial profit if we hit a target
-                if !self.partial_profit_target.is_empty()
+                if self.pos == Position::Short
+                    && !self.partial_profit_target.is_empty()
                     && self
                         .partial_profit_target
                         .iter()
                         .any(|p| dec_price <= p.target_price)
                 {
                     let _ = Self::evaluate_short_partial_profit(self, price, exchange).await;
+                }
+
+                if self.pos == Position::Short {
+                    if let Some(current_sl) = self.open_pos.sl {
+                        match structural_sl::evaluate_sl_tighten(
+                            &mut self.redis_conn,
+                            price,
+                            Helper::decimal_to_f64(current_sl),
+                            self.open_pos.entry_time,
+                            self.pos,
+                        )
+                        .await
+                        {
+                            structural_sl::SlTightenResult::Tighten(new_sl) => {
+                                self.open_pos.sl = Some(Helper::f64_to_decimal(new_sl));
+                                let pid = self.open_pos.position_id.as_deref();
+                                if let Err(e) = exchange.modify_tpsl(pid, self.pos, None, Some(new_sl)).await {
+                                    warn!("StructuralSL: failed to sync tightened SL to exchange: {e}");
+                                }
+                            }
+                            structural_sl::SlTightenResult::ExitNow => {
+                                let _: () = Self::close_short_position(self, dec_price).await?;
+                                self.pos = Position::Flat;
+                            }
+                            structural_sl::SlTightenResult::NoChange => {}
+                        }
+                    }
                 }
             }
         }

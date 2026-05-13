@@ -96,6 +96,14 @@ impl MacroTracker {
         }
     }
 
+    fn levels_ready(&self) -> bool {
+        self.ema_1d_200.current().is_some()
+            && self.ema_2w_50.current().is_some()
+            && self.gc_2w.midline.is_some()
+            && self.gc_1w.lower_band.is_some()
+            && self.baseline_1w.value.is_some()
+    }
+
     fn process_1d_bar(&mut self, bar: &Bar) {
         self.ema_1d_200.update(bar.close);
     }
@@ -303,6 +311,11 @@ async fn macro_tracker_main(
         tracker.process_1w_bar(bar);
     }
 
+    if !tracker.levels_ready() {
+        log::info!("MacroTracker: warm-up in progress — not all 5 levels ready, skipping publish");
+        return;
+    }
+
     let snapshot = tracker.snapshot(current_price);
 
     info!(
@@ -437,8 +450,7 @@ async fn gaussian_3d_main(
     };
 
     info!(
-        "GaussianChannel3D: price={:.0} regime={:?} upper={:.0} lower={:.0} mid={:.0}",
-        current_price, regime, upper, lower, midline,
+        "GaussianChannel3D: price={current_price:.0} regime={regime:?} upper={upper:.0} lower={lower:.0} mid={midline:.0}"
     );
 
     let snapshot = GaussianRegime3DSnapshot {

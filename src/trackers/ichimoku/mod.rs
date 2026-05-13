@@ -1,32 +1,19 @@
-use anyhow::Result;
+use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
+use std::time::Duration;
+
+use chrono::{DateTime, Utc};
+use log;
 use redis::aio::MultiplexedConnection;
 use redis::AsyncCommands;
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::time;
 
-use std::collections::{HashMap, VecDeque};
-use std::fs;
-use std::io;
-use std::path::Path;
-use std::time::Duration;
-
-use crate::exchange::bitget::Candle;
-use crate::helper::Helper;
-use crate::helper::{LAST_25_WEEKLY_ICHIMOKU_SPANS, TRADING_BOT_ICHIMOKU_CROSS, WEEKLY_CANDLES, WEEKLY_ICHIMOKU};
-
-// #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// pub enum TenkanKijunCross {
-//     Bullish,
-//     Bearish,
-// }
-
-// pub enum CrossStrength {
-//     StrongBullish,
-//     WeakBullish,
-//     StrongBearish,
-//     WeakBearish,
-// }
+use crate::exchange::bitget::{fetch_bitget_candles, Candle};
+use crate::helper::{
+    LAST_25_WEEKLY_ICHIMOKU_SPANS, TRADING_BOT_ICHIMOKU_CROSS, WEEKLY_CANDLES, WEEKLY_ICHIMOKU,
+};
+use crate::trackers::smart_money_concepts::Bar;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,87 +33,120 @@ pub struct Ichimoku {
     pub lagging_span: Vec<Option<f64>>,    // Chikou
 }
 
-//Ichimoku is used for BTC on the weekly timeframe
-///Download the one-minute BTCUSD from the dataset from : https://www.kaggle.com/api/v1/datasets/download/mczielinski/bitcoin-historical-data,
-/// resolve it into a weekly timeframe, and calculate the ichimoku
-pub async fn ichimoku_loop(redis_conn: MultiplexedConnection) -> Result<()> {
-    let loop_interval_seconds = 604800;
+/// Fetches live 1W candles from Bitget, merges with the historical seed, computes
+/// the weekly Ichimoku, and writes `TRADING_BOT_ICHIMOKU_CROSS`, `WEEKLY_ICHIMOKU`,
+/// `WEEKLY_CANDLES`, and `LAST_25_WEEKLY_ICHIMOKU_SPANS` to Redis on every tick.
+///
+/// `seed_bars` provides Kaggle-sourced history (750+ weeks). Only live candles
+/// newer than the seed cutoff are fetched from Bitget, ensuring the Ichimoku cloud
+/// always has enough history (needs ≥78 bars) without hitting API limits.
+pub async fn ichimoku_loop(
+    mut conn: MultiplexedConnection,
+    http: Arc<reqwest::Client>,
+    symbol: Arc<str>,
+    seed_bars: Arc<Vec<Bar>>,
+    interval_secs: u64,
+) {
+    // Convert seed bars to Bitget Candle format once up-front.
+    let seed_candles: Vec<Candle> = seed_bars
+        .iter()
+        .map(|b| Candle {
+            timestamp: b.time.timestamp_millis(),
+            open: b.open,
+            high: b.high,
+            low: b.low,
+            close: b.close,
+            volume: b.volume.unwrap_or(0.0),
+            quote_volume: b.volume_quote.unwrap_or(0.0),
+        })
+        .collect();
 
-    let mut interval = time::interval(Duration::from_secs(loop_interval_seconds));
+    let seed_cutoff_ms: Option<i64> = seed_candles.iter().map(|c| c.timestamp).max();
 
-    let url = "https://www.kaggle.com/api/v1/datasets/download/mczielinski/bitcoin-historical-data";
-
+    let mut interval = time::interval(Duration::from_secs(interval_secs));
     loop {
         interval.tick().await;
 
-        //let url = url.to_string();
-        let result = tokio::task::spawn_blocking(move || {
-            download_large_file(url, "data/btcusd_1-min_data.zip")
-        })
-        .await;
-
-        match result {
-            Ok(Err(e)) => {
-                eprintln!("CRITICAL ERROR in ichimoku_loop: {e:?}");
-                eprintln!("Retrying in {loop_interval_seconds} seconds...");
-            }
+        // Fetch the most recent live candles; filter to only bars newer than the seed.
+        let live_delta: Vec<Candle> = match fetch_bitget_candles(&http, &symbol, "1W", "52").await {
+            Ok(live) => live
+                .into_iter()
+                .filter(|c| seed_cutoff_ms.is_none_or(|cutoff| c.timestamp > cutoff))
+                .collect(),
             Err(e) => {
-                eprintln!("Task Join Error: {e:?}");
+                log::error!("IchimokuTracker: 1W candle fetch failed: {e}");
+                Vec::new()
             }
-            _ => {}
-        }
-
-        let _extract_weekly = tokio::task::spawn_blocking(move || {
-            Helper::extract_into_weekly_candle(
-                "data/btcusd_1-min_data.csv",
-                "data/btcusd_weekly_data.csv",
-            )
-        })
-        .await;
-
-        let ichimoku_conn = redis_conn.clone();
-        let _process_weekly_ichimoku =
-            tokio::task::spawn(async move { process_weekly_ichimoku(ichimoku_conn).await }).await;
-    }
-}
-
-fn download_large_file(url: &str, path: &str) -> Result<()> {
-    println!("Downloading {url}...");
-
-    let mut response = reqwest::blocking::get(url)?;
-    let mut temp = tempfile::NamedTempFile::new()?;
-    io::copy(&mut response, &mut temp)?;
-
-    temp.persist(path)?;
-    println!("Downloaded {url}");
-
-    println!("Extracting {path}...");
-    let file = fs::File::open(path)?;
-    let mut archive = zip::ZipArchive::new(file)?;
-    let parent_dir = Path::new(path).parent().unwrap_or(Path::new("."));
-
-    for i in 0..archive.len() {
-        let mut file = archive.by_index(i)?;
-        let outpath = match file.enclosed_name() {
-            Some(path) => parent_dir.join(path),
-            None => continue,
         };
 
-        if file.name().ends_with('/') {
-            fs::create_dir_all(&outpath)?;
-        } else {
-            if let Some(p) = outpath.parent() {
-                if !p.exists() {
-                    fs::create_dir_all(p)?;
+        // Merge seed history + live delta, sorted ascending.
+        let mut candles: Vec<Candle> = seed_candles.clone();
+        candles.extend(live_delta);
+        candles.sort_by_key(|c| c.timestamp);
+
+        if candles.is_empty() {
+            log::warn!("IchimokuTracker: no candles after seed+live merge — skipping tick");
+            continue;
+        }
+
+        log::info!("IchimokuTracker: computing on {} weekly candles (seed + live delta)", candles.len());
+
+        let ichimoku = ichimoku_processor(&candles, 9, 26, 52, 26);
+
+        if let Ok(s) = serde_json::to_string(&candles) {
+            if let Err(e) = conn.set::<_, _, ()>(WEEKLY_CANDLES, s).await {
+                log::error!("IchimokuTracker: Redis WEEKLY_CANDLES write failed: {e}");
+            }
+        }
+
+        if let Ok(s) = serde_json::to_string(&ichimoku) {
+            if let Err(e) = conn.set::<_, _, ()>(WEEKLY_ICHIMOKU, s).await {
+                log::error!("IchimokuTracker: Redis WEEKLY_ICHIMOKU write failed: {e}");
+            }
+        }
+
+        let (last_25_span_a, last_25_span_b) =
+            get_last_25_spans(&ichimoku.leading_span_a, &ichimoku.leading_span_b);
+        let mut l_25 = HashMap::new();
+        l_25.insert("span_a", last_25_span_a);
+        l_25.insert("span_b", last_25_span_b);
+        if let Ok(s) = serde_json::to_string(&l_25) {
+            if let Err(e) = conn.set::<_, _, ()>(LAST_25_WEEKLY_ICHIMOKU_SPANS, s).await {
+                log::error!("IchimokuTracker: Redis LAST_25 write failed: {e}");
+            }
+        }
+
+        let current_close = candles.last().map(|c| c.close).unwrap_or(0.0);
+
+        match detect_kijun_spanb_state(&ichimoku) {
+            Some((state, kijun, span_b)) => {
+                let snapshot = IchimokuCrossSnapshot {
+                    state,
+                    updated_at: Utc::now(),
+                };
+                match serde_json::to_string(&snapshot) {
+                    Ok(s) => {
+                        if let Err(e) =
+                            conn.set::<_, _, ()>(TRADING_BOT_ICHIMOKU_CROSS, s).await
+                        {
+                            log::error!("IchimokuTracker: Redis ICHIMOKU_CROSS write failed: {e}");
+                        } else {
+                            log::info!(
+                                "IchimokuTracker: {:?} | price={current_close:.2}  kijun={kijun:.2}  span_b={span_b:.2}",
+                                state,
+                            );
+                        }
+                    }
+                    Err(e) => log::error!("IchimokuTracker: snapshot serialise failed: {e}"),
                 }
             }
-            let mut outfile = fs::File::create(&outpath)?;
-            io::copy(&mut file, &mut outfile)?;
+            None => {
+                log::warn!(
+                    "IchimokuTracker: could not detect Kijun/SpanB state — insufficient candles"
+                );
+            }
         }
     }
-    println!("Extracted {path}");
-
-    Ok(())
 }
 
 fn donchian_midpoint(candles: &[Candle], index: usize, length: usize) -> Option<f64> {
@@ -165,12 +185,10 @@ fn ichimoku_processor(
         conversion[i] = donchian_midpoint(candles, i, conversion_periods);
         base[i] = donchian_midpoint(candles, i, base_periods);
 
-        // Lagging span (close shifted backward)
         if i >= displacement {
             lagging[i - displacement] = Some(candles[i].close);
         }
 
-        // Leading spans (shifted forward)
         if let (Some(conv), Some(base)) = (conversion[i], base[i]) {
             span_a[i + displacement] = Some((conv + base) / 2.0);
         }
@@ -179,12 +197,6 @@ fn ichimoku_processor(
             span_b[i + displacement] = Some(b);
         }
     }
-
-    //let bounds = kumo_bounds(&span_a, &span_b);
-    //println!("bounds: {:?}", bounds);
-
-    //println!("span_a: {:?}", span_a);
-    //println!("span_b: {:?}", span_b);
 
     Ichimoku {
         conversion_line: conversion,
@@ -195,65 +207,12 @@ fn ichimoku_processor(
     }
 }
 
-// fn tenkan_kijun_cross(
-//     tenkan: &[Option<f64>],
-//     kijun: &[Option<f64>],
-// ) -> Vec<Option<TenkanKijunCross>> {
-//     let len = tenkan.len().min(kijun.len());
-//     let mut signals = vec![None; len];
-
-//     for i in 1..len {
-//         let (t_prev, k_prev) = (tenkan[i - 1], kijun[i - 1]);
-//         let (t_now, k_now) = (tenkan[i], kijun[i]);
-
-//         if let (Some(tp), Some(kp), Some(tn), Some(kn)) = (t_prev, k_prev, t_now, k_now) {
-//             // Bullish cross
-//             if tp <= kp && tn > kn {
-//                 signals[i] = Some(TenkanKijunCross::Bullish);
-//             }
-
-//             // Bearish cross
-//             if tp >= kp && tn < kn {
-//                 signals[i] = Some(TenkanKijunCross::Bearish);
-//             }
-//         }
-//     }
-
-//     signals
-// }
-
-// fn kumo_bounds(
-//     span_a: &[Option<f64>],
-//     span_b: &[Option<f64>],
-// ) -> (Vec<Option<f64>>, Vec<Option<f64>>) {
-//     let len = span_a.len().min(span_b.len());
-
-//     let mut upper = vec![None; len];
-//     let mut lower = vec![None; len];
-
-//     for i in 0..len {
-//         match (span_a[i], span_b[i]) {
-//             (Some(a), Some(b)) => {
-//                 upper[i] = Some(a.max(b));
-//                 lower[i] = Some(a.min(b));
-//             }
-//             _ => {}
-//         }
-//     }
-
-//     (upper, lower)
-// }
-
 fn get_last_25_spans(
     span_a: &[Option<f64>],
     span_b: &[Option<f64>],
 ) -> (Vec<Option<f64>>, Vec<Option<f64>>) {
-    let len_a = span_a.len();
-    let len_b = span_b.len();
-
-    let start_a = len_a.saturating_sub(25);
-    let start_b = len_b.saturating_sub(25);
-
+    let start_a = span_a.len().saturating_sub(25);
+    let start_b = span_b.len().saturating_sub(25);
     (span_a[start_a..].to_vec(), span_b[start_b..].to_vec())
 }
 
@@ -269,61 +228,24 @@ pub struct IchimokuCrossSnapshot {
     pub updated_at: DateTime<Utc>,
 }
 
-fn detect_kijun_spanb_state(ichimoku: &Ichimoku) -> Option<IchimokuCrossState> {
+fn detect_kijun_spanb_state(ichimoku: &Ichimoku) -> Option<(IchimokuCrossState, f64, f64)> {
     let kijun = &ichimoku.base_line;
     let span_b = &ichimoku.leading_span_b;
 
     // Walk backward to find the most recent bar where both values are valid.
     // base_line[i] = Kijun at bar i.
     // leading_span_b[i] = SpanB projected to bar i (computed from candles[i-26]).
-    // Both at the same index i represent the same point in time.
     for i in (0..kijun.len()).rev() {
         if let (Some(k), Some(s)) = (kijun[i], span_b[i]) {
-            return Some(if k >= s {
+            let state = if k >= s {
                 IchimokuCrossState::KijunAboveSpanB
             } else {
                 IchimokuCrossState::KijunBelowSpanB
-            });
+            };
+            return Some((state, k, s));
         }
     }
     None
-}
-
-async fn process_weekly_ichimoku(mut redis_conn: MultiplexedConnection) -> Result<()> {
-    let weekly_candles = Helper::read_candles_from_csv("data/btcusd_weekly_data.csv").unwrap();
-    let serde_weekly_candles = serde_json::to_string(&weekly_candles).unwrap();
-    let _: () = redis_conn.set(WEEKLY_CANDLES, serde_weekly_candles).await?;
-
-    let weekly_ichimoku = ichimoku_processor(&weekly_candles, 9, 26, 52, 26);
-    let serde_weekly_ichimoku = serde_json::to_string(&weekly_ichimoku).unwrap();
-    let _: () = redis_conn
-        .set(WEEKLY_ICHIMOKU, serde_weekly_ichimoku)
-        .await?;
-
-    let (last_25_span_a, last_25_span_b) = get_last_25_spans(
-        &weekly_ichimoku.leading_span_a,
-        &weekly_ichimoku.leading_span_b,
-    );
-
-    let mut l_25 = HashMap::new();
-    l_25.insert("span_a", last_25_span_a);
-    l_25.insert("span_b", last_25_span_b);
-
-    let serde_last_25_spans = serde_json::to_string(&l_25).unwrap();
-    let _: () = redis_conn
-        .set(LAST_25_WEEKLY_ICHIMOKU_SPANS, serde_last_25_spans)
-        .await?;
-
-    if let Some(state) = detect_kijun_spanb_state(&weekly_ichimoku) {
-        let snapshot = IchimokuCrossSnapshot {
-            state,
-            updated_at: Utc::now(),
-        };
-        let serialized = serde_json::to_string(&snapshot).unwrap();
-        let _: () = redis_conn.set(TRADING_BOT_ICHIMOKU_CROSS, serialized).await?;
-    }
-
-    Ok(())
 }
 
 // ─── Ichimoku Baseline (Kijun-sen) ───────────────────────────────────────────
@@ -398,7 +320,6 @@ mod tests {
     #[test]
     fn baseline_rolls_window() {
         let mut bl = IchimokuBaseline::new();
-        // Feed 26 bars with high=100, low=50 → baseline = 75
         for _ in 0..26 {
             bl.update(100.0, 50.0);
         }
@@ -408,60 +329,3 @@ mod tests {
         assert!((bl.value.unwrap() - 125.0).abs() < 1e-9);
     }
 }
-
-// pub fn kumo_cross(span_a: &[Option<f64>], span_b: &[Option<f64>]) -> Vec<Option<KumoCross>> {
-//     let len = span_a.len().min(span_b.len());
-//     let mut signals = vec![None; len];
-
-//     for i in 1..len {
-//         let (a_prev, b_prev) = (span_a[i - 1], span_b[i - 1]);
-//         let (a_now, b_now) = (span_a[i], span_b[i]);
-
-//         if let (Some(ap), Some(bp), Some(an), Some(bn)) = (a_prev, b_prev, a_now, b_now) {
-//             // Bullish Kumo flip
-//             if ap <= bp && an > bn {
-//                 signals[i] = Some(KumoCross::Bullish);
-//             }
-
-//             // Bearish Kumo flip
-//             if ap >= bp && an < bn {
-//                 signals[i] = Some(KumoCross::Bearish);
-//             }
-//         }
-//     }
-
-//     signals
-// }
-
-// pub fn kumo_cross_from_bounds(
-//     upper: &[Option<f64>],
-//     lower: &[Option<f64>],
-//     span_a: &[Option<f64>],
-// ) -> Vec<Option<KumoCross>> {
-//     let len = upper.len().min(span_a.len());
-//     let mut signals = vec![None; len];
-
-//     for i in 1..len {
-//         if let (Some(a_prev), Some(u_prev), Some(_l_prev), Some(a_now), Some(u_now), Some(_l_now)) = (
-//             span_a[i - 1],
-//             upper[i - 1],
-//             lower[i - 1],
-//             span_a[i],
-//             upper[i],
-//             lower[i],
-//         ) {
-//             let prev_bull = (u_prev - a_prev).abs() < 1e-9;
-//             let now_bull = (u_now - a_now).abs() < 1e-9;
-
-//             if !prev_bull && now_bull {
-//                 signals[i] = Some(KumoCross::Bullish);
-//             }
-
-//             if prev_bull && !now_bull {
-//                 signals[i] = Some(KumoCross::Bearish);
-//             }
-//         }
-//     }
-
-//     signals
-// }
