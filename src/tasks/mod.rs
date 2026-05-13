@@ -89,9 +89,9 @@ pub async fn spawn_background_tasks(
     }
 
     if cfg.use_ichimoku_indicator {
-        let (conn, h, sym) = (redis_conn.clone(), Arc::clone(&http), Arc::clone(&symbol));
+        let (conn, h, sym, seeds) = (redis_conn.clone(), Arc::clone(&http), Arc::clone(&symbol), Arc::clone(&seed_1w));
         task_set.spawn(async move {
-            trackers::ichimoku::ichimoku_loop(conn, h, sym, 14400).await;
+            trackers::ichimoku::ichimoku_loop(conn, h, sym, seeds, 14400).await;
         });
     }
 

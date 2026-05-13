@@ -13,6 +13,7 @@ use crate::exchange::bitget::{fetch_bitget_candles, Candle};
 use crate::helper::{
     LAST_25_WEEKLY_ICHIMOKU_SPANS, TRADING_BOT_ICHIMOKU_CROSS, WEEKLY_CANDLES, WEEKLY_ICHIMOKU,
 };
+use crate::trackers::smart_money_concepts::Bar;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,36 +33,63 @@ pub struct Ichimoku {
     pub lagging_span: Vec<Option<f64>>,    // Chikou
 }
 
-/// Fetches live 1W candles from Bitget, computes the weekly Ichimoku, and writes
-/// `TRADING_BOT_ICHIMOKU_CROSS`, `WEEKLY_ICHIMOKU`, `WEEKLY_CANDLES`, and
-/// `LAST_25_WEEKLY_ICHIMOKU_SPANS` to Redis on every tick.
+/// Fetches live 1W candles from Bitget, merges with the historical seed, computes
+/// the weekly Ichimoku, and writes `TRADING_BOT_ICHIMOKU_CROSS`, `WEEKLY_ICHIMOKU`,
+/// `WEEKLY_CANDLES`, and `LAST_25_WEEKLY_ICHIMOKU_SPANS` to Redis on every tick.
 ///
-/// All errors are logged and the loop continues — Redis state is never left stale
-/// by a silent failure.
+/// `seed_bars` provides Kaggle-sourced history (750+ weeks). Only live candles
+/// newer than the seed cutoff are fetched from Bitget, ensuring the Ichimoku cloud
+/// always has enough history (needs ≥78 bars) without hitting API limits.
 pub async fn ichimoku_loop(
     mut conn: MultiplexedConnection,
     http: Arc<reqwest::Client>,
     symbol: Arc<str>,
+    seed_bars: Arc<Vec<Bar>>,
     interval_secs: u64,
 ) {
+    // Convert seed bars to Bitget Candle format once up-front.
+    let seed_candles: Vec<Candle> = seed_bars
+        .iter()
+        .map(|b| Candle {
+            timestamp: b.time.timestamp_millis(),
+            open: b.open,
+            high: b.high,
+            low: b.low,
+            close: b.close,
+            volume: b.volume.unwrap_or(0.0),
+            quote_volume: b.volume_quote.unwrap_or(0.0),
+        })
+        .collect();
+
+    let seed_cutoff_ms: Option<i64> = seed_candles.iter().map(|c| c.timestamp).max();
+
     let mut interval = time::interval(Duration::from_secs(interval_secs));
     loop {
         interval.tick().await;
 
-        let mut candles = match fetch_bitget_candles(&http, &symbol, "1W", "52").await {
-            Ok(c) => c,
+        // Fetch the most recent live candles; filter to only bars newer than the seed.
+        let live_delta: Vec<Candle> = match fetch_bitget_candles(&http, &symbol, "1W", "52").await {
+            Ok(live) => live
+                .into_iter()
+                .filter(|c| seed_cutoff_ms.is_none_or(|cutoff| c.timestamp > cutoff))
+                .collect(),
             Err(e) => {
                 log::error!("IchimokuTracker: 1W candle fetch failed: {e}");
-                continue;
+                Vec::new()
             }
         };
 
+        // Merge seed history + live delta, sorted ascending.
+        let mut candles: Vec<Candle> = seed_candles.clone();
+        candles.extend(live_delta);
+        candles.sort_by_key(|c| c.timestamp);
+
         if candles.is_empty() {
-            log::warn!("IchimokuTracker: 1W fetch returned no candles — skipping tick");
+            log::warn!("IchimokuTracker: no candles after seed+live merge — skipping tick");
             continue;
         }
 
-        candles.sort_by_key(|c| c.timestamp);
+        log::info!("IchimokuTracker: computing on {} weekly candles (seed + live delta)", candles.len());
 
         let ichimoku = ichimoku_processor(&candles, 9, 26, 52, 26);
 
@@ -88,8 +116,10 @@ pub async fn ichimoku_loop(
             }
         }
 
+        let current_close = candles.last().map(|c| c.close).unwrap_or(0.0);
+
         match detect_kijun_spanb_state(&ichimoku) {
-            Some(state) => {
+            Some((state, kijun, span_b)) => {
                 let snapshot = IchimokuCrossSnapshot {
                     state,
                     updated_at: Utc::now(),
@@ -102,9 +132,8 @@ pub async fn ichimoku_loop(
                             log::error!("IchimokuTracker: Redis ICHIMOKU_CROSS write failed: {e}");
                         } else {
                             log::info!(
-                                "IchimokuTracker: {:?} written at {}",
+                                "IchimokuTracker: {:?} | price={current_close:.2}  kijun={kijun:.2}  span_b={span_b:.2}",
                                 state,
-                                snapshot.updated_at
                             );
                         }
                     }
@@ -199,7 +228,7 @@ pub struct IchimokuCrossSnapshot {
     pub updated_at: DateTime<Utc>,
 }
 
-fn detect_kijun_spanb_state(ichimoku: &Ichimoku) -> Option<IchimokuCrossState> {
+fn detect_kijun_spanb_state(ichimoku: &Ichimoku) -> Option<(IchimokuCrossState, f64, f64)> {
     let kijun = &ichimoku.base_line;
     let span_b = &ichimoku.leading_span_b;
 
@@ -208,11 +237,12 @@ fn detect_kijun_spanb_state(ichimoku: &Ichimoku) -> Option<IchimokuCrossState> {
     // leading_span_b[i] = SpanB projected to bar i (computed from candles[i-26]).
     for i in (0..kijun.len()).rev() {
         if let (Some(k), Some(s)) = (kijun[i], span_b[i]) {
-            return Some(if k >= s {
+            let state = if k >= s {
                 IchimokuCrossState::KijunAboveSpanB
             } else {
                 IchimokuCrossState::KijunBelowSpanB
-            });
+            };
+            return Some((state, k, s));
         }
     }
     None

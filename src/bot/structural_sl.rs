@@ -85,20 +85,26 @@ pub async fn evaluate_sl_tighten(
         }
     }
 
-    // Priority 2 — RSI divergence opposing trade direction
+    // Priority 2 — RSI divergence opposing trade direction, post-entry only.
+    // Only divergence that formed AFTER entry is relevant: pre-entry signals were
+    // already evaluated by the confluence gate at the time of entry and either
+    // blocked it or were accepted. Acting on them again inside the position would
+    // tighten the SL based on stale momentum data.
     if let Some(snapshot) = read_json::<RsiDivSnapshot>(conn, TRADING_BOT_RSI_DIV_4H).await {
         let has_opposing_div = match pos {
             Position::Short => snapshot.events.iter().any(|e| {
-                matches!(
-                    e,
-                    RsiDivEvent::RegularBullish { .. } | RsiDivEvent::HiddenBullish { .. }
-                )
+                e.time() > entry_time
+                    && matches!(
+                        e,
+                        RsiDivEvent::RegularBullish { .. } | RsiDivEvent::HiddenBullish { .. }
+                    )
             }),
             Position::Long => snapshot.events.iter().any(|e| {
-                matches!(
-                    e,
-                    RsiDivEvent::RegularBearish { .. } | RsiDivEvent::HiddenBearish { .. }
-                )
+                e.time() > entry_time
+                    && matches!(
+                        e,
+                        RsiDivEvent::RegularBearish { .. } | RsiDivEvent::HiddenBearish { .. }
+                    )
             }),
             Position::Flat => false,
         };

@@ -34,10 +34,12 @@ pub struct StructuralTpLevel {
 pub async fn collect_structural_tp_levels(
     conn: &mut redis::aio::MultiplexedConnection,
     entry_price: f64,
+    sl_price: f64,
     pos: Position,
     min_distance: f64,
     max_levels: usize,
 ) -> Vec<StructuralTpLevel> {
+    let sl_distance = (entry_price - sl_price).abs();
     let mut candidates: Vec<StructuralTpLevel> = Vec::new();
 
     // --- SMC zones ---
@@ -75,11 +77,12 @@ pub async fn collect_structural_tp_levels(
                 .iter()
                 .filter(|n| n.node_type == NodeType::HighVolumeNode)
             {
-                let price = node.bin.price_mid;
-                let qualifies = match pos {
-                    Position::Short => price < entry_price,
-                    Position::Long => price > entry_price,
-                    Position::Flat => false,
+                // Near-edge: exit just as price enters the HVN, before absorption starts.
+                // Long targets the bottom of the zone above; short targets the top of the zone below.
+                let (price, qualifies) = match pos {
+                    Position::Long => (node.bin.price_low, node.bin.price_low > entry_price),
+                    Position::Short => (node.bin.price_high, node.bin.price_high < entry_price),
+                    Position::Flat => (node.bin.price_mid, false),
                 };
                 if qualifies {
                     candidates.push(StructuralTpLevel {
@@ -114,6 +117,14 @@ pub async fn collect_structural_tp_levels(
     // Dropped VrvpHvns that are close to an SmcZone are logged as double confirmation.
     let mut kept: Vec<StructuralTpLevel> = Vec::with_capacity(max_levels);
     for candidate in candidates {
+        if candidate.distance_from_entry < sl_distance {
+            info!(
+                "StructuralTP: skipping level @ {:.2} — distance {:.2} < SL distance {:.2} (R:R < 1:1)",
+                candidate.price, candidate.distance_from_entry, sl_distance
+            );
+            continue;
+        }
+
         let too_close = kept
             .iter()
             .any(|k| (candidate.price - k.price).abs() < min_distance);
@@ -145,8 +156,7 @@ pub async fn collect_structural_tp_levels(
 pub fn build_profit_targets_structural(
     levels: Vec<StructuralTpLevel>,
     entry_price: Decimal,
-    margin: Decimal,
-    leverage: Decimal,
+    total_size: Decimal,
     pos: Position,
     fallback_step: Decimal,
 ) -> Vec<PartialProfitTarget> {
@@ -182,13 +192,7 @@ pub fn build_profit_targets_structural(
         info!("TP{} @ {price} ← arithmetic fallback", i + 1);
     }
 
-    // Position size in BTC
-    let notional = margin * leverage;
-    let total_size = if entry_price.is_zero() {
-        dec!(0)
-    } else {
-        (notional / entry_price).round_dp(size_precision)
-    };
+    let total_size = total_size.round_dp(size_precision);
 
     let mut remaining = total_size;
     let mut ladder = Vec::with_capacity(tp_prices.len());

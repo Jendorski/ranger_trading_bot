@@ -331,17 +331,8 @@ fn warn_if_stale(label: &str, updated_at: DateTime<Utc>, max_age_secs: i64) {
     }
 }
 
-fn event_time(e: &RsiDivEvent) -> DateTime<Utc> {
-    match e {
-        RsiDivEvent::RegularBullish { time, .. }
-        | RsiDivEvent::HiddenBullish { time, .. }
-        | RsiDivEvent::RegularBearish { time, .. }
-        | RsiDivEvent::HiddenBearish { time, .. } => *time,
-    }
-}
-
 fn is_recent(e: &RsiDivEvent) -> bool {
-    Utc::now() - event_time(e) <= Duration::hours(RSI_DIV_LOOKBACK_HOURS)
+    Utc::now() - e.time() <= Duration::hours(RSI_DIV_LOOKBACK_HOURS)
 }
 
 async fn read_json<T: for<'de> Deserialize<'de>>(

@@ -692,6 +692,13 @@ impl<'a> Bot<'a> {
         };
 
         warn!("NEW SL for LONG is: {:?}", target.sl);
+        if let Some(new_sl_dec) = target.sl {
+            let new_sl = Helper::decimal_to_f64(new_sl_dec);
+            let pid = self.open_pos.position_id.as_deref();
+            if let Err(e) = exchange.modify_tpsl(pid, Position::Long, None, Some(new_sl)).await {
+                warn!("StructuralSL: failed to sync TP-step SL to exchange (long): {e}");
+            }
+        }
         self.store_position(self.pos, &self.open_pos.clone())
             .await?;
         Ok(())
@@ -804,11 +811,16 @@ impl<'a> Bot<'a> {
             order_id: self.open_pos.order_id.clone(),
             position_id: self.open_pos.position_id.clone(),
         };
+        warn!("NEW SL for SHORT is: {:?}", target.sl);
+        if let Some(new_sl_dec) = target.sl {
+            let new_sl = Helper::decimal_to_f64(new_sl_dec);
+            let pid = self.open_pos.position_id.as_deref();
+            if let Err(e) = exchange.modify_tpsl(pid, Position::Short, None, Some(new_sl)).await {
+                warn!("StructuralSL: failed to sync TP-step SL to exchange (short): {e}");
+            }
+        }
         self.store_position(self.pos, &self.open_pos.clone())
             .await?;
-
-        warn!("NEW SL for SHORT is: {:?}", target.sl);
-
         Ok(())
     }
 
@@ -901,19 +913,20 @@ impl<'a> Bot<'a> {
     async fn store_partial_profit_targets(
         &mut self,
         entry_price: f64,
+        sl_price: f64,
         pos: Position,
+        total_size: Decimal,
     ) -> Result<()> {
         self.zones = Bot::load_zones(&mut self.redis_conn)
             .await
             .unwrap_or(Zones::default());
 
         let dec_entry_price = Decimal::from_f64(entry_price).unwrap();
-        let dec_leverage = Decimal::from_f64(self.config.leverage).unwrap();
-        let current_margin = self.current_margin;
 
         let structural_levels = structural_tp::collect_structural_tp_levels(
             &mut self.redis_conn,
             entry_price,
+            sl_price,
             pos,
             self.config.smc_min_distance,
             4,
@@ -933,8 +946,7 @@ impl<'a> Bot<'a> {
             info!("StructuralTP: no structural levels found — using arithmetic fallback");
             Helper::build_profit_targets(
                 dec_entry_price,
-                current_margin,
-                dec_leverage,
+                total_size,
                 dec_ranger_price_difference,
                 pos,
             )
@@ -944,8 +956,7 @@ impl<'a> Bot<'a> {
             structural_tp::build_profit_targets_structural(
                 structural_levels,
                 dec_entry_price,
-                current_margin,
-                dec_leverage,
+                total_size,
                 pos,
                 fallback_step,
             )
@@ -1166,9 +1177,6 @@ impl<'a> Bot<'a> {
                         "Funding-aware sizing: rate={funding_rate:.6}, multiplier={funding_multiplier:.2}"
                     );
 
-                    let _: Result<()> =
-                        Self::store_partial_profit_targets(self, price, intended_pos).await;
-
                     let combined_multiplier =
                         funding_multiplier * Helper::f64_to_decimal(size_mod);
                     let current_margin = self.current_margin * combined_multiplier;
@@ -1186,6 +1194,9 @@ impl<'a> Bot<'a> {
                         Helper::f64_to_decimal(self.config.ranger_risk_pct),
                         Helper::f64_to_decimal(self.config.leverage),
                     );
+
+                    let _: Result<()> =
+                        Self::store_partial_profit_targets(self, price, sl_price, intended_pos, qty).await;
 
                     self.open_pos = Self::prepare_open_position(
                         self,
@@ -1260,9 +1271,6 @@ impl<'a> Bot<'a> {
                         "Funding-aware sizing: rate={funding_rate:.6}, multiplier={funding_multiplier:.2}"
                     );
 
-                    let _: Result<()> =
-                        Self::store_partial_profit_targets(self, price, intended_pos).await;
-
                     let combined_multiplier =
                         funding_multiplier * Helper::f64_to_decimal(size_mod);
                     let current_margin = self.current_margin * combined_multiplier;
@@ -1280,6 +1288,9 @@ impl<'a> Bot<'a> {
                         Helper::f64_to_decimal(self.config.ranger_risk_pct),
                         Helper::f64_to_decimal(self.config.leverage),
                     );
+
+                    let _: Result<()> =
+                        Self::store_partial_profit_targets(self, price, sl_price, intended_pos, qty).await;
 
                     self.open_pos = Self::prepare_open_position(
                         self,
@@ -1369,6 +1380,10 @@ impl<'a> Bot<'a> {
                         {
                             structural_sl::SlTightenResult::Tighten(new_sl) => {
                                 self.open_pos.sl = Some(Helper::f64_to_decimal(new_sl));
+                                let pid = self.open_pos.position_id.as_deref();
+                                if let Err(e) = exchange.modify_tpsl(pid, self.pos, None, Some(new_sl)).await {
+                                    warn!("StructuralSL: failed to sync tightened SL to exchange: {e}");
+                                }
                             }
                             structural_sl::SlTightenResult::ExitNow => {
                                 let _: () = Self::close_long_position(self, dec_price).await?;
@@ -1424,6 +1439,10 @@ impl<'a> Bot<'a> {
                         {
                             structural_sl::SlTightenResult::Tighten(new_sl) => {
                                 self.open_pos.sl = Some(Helper::f64_to_decimal(new_sl));
+                                let pid = self.open_pos.position_id.as_deref();
+                                if let Err(e) = exchange.modify_tpsl(pid, self.pos, None, Some(new_sl)).await {
+                                    warn!("StructuralSL: failed to sync tightened SL to exchange: {e}");
+                                }
                             }
                             structural_sl::SlTightenResult::ExitNow => {
                                 let _: () = Self::close_short_position(self, dec_price).await?;

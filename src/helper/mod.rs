@@ -319,29 +319,17 @@ impl Helper {
 
     pub fn build_profit_targets(
         entry_price: Decimal,
-        margin: Decimal,
-        leverage: Decimal,
+        total_size: Decimal,
         ranger_price_difference: Decimal,
         pos: Position,
     ) -> Vec<PartialProfitTarget> {
-        // BTC precision (e.g. 5 or 6)
         let size_precision: u32 = 5;
-
         let tp_counts: usize = 4;
         let tp_prices: Vec<Decimal> =
             Helper::tp_prices(ranger_price_difference, entry_price, tp_counts, pos);
 
         let fractions: &[Decimal] = &[dec!(0.20), dec!(0.30), dec!(0.30), dec!(0.20)];
-
-        // Total notional
-        let notional = margin * leverage;
-
-        // Total position size in BTC
-        let total_size = if entry_price.is_zero() {
-            dec!(0.00)
-        } else {
-            (notional / entry_price).round_dp(size_precision)
-        };
+        let total_size = total_size.round_dp(size_precision);
 
         let mut remaining = total_size;
         let mut ladder = Vec::with_capacity(tp_prices.len());
@@ -570,13 +558,118 @@ mod tests {
 
     #[test]
     fn test_build_profit_targets_zero_price() {
+        // total_size zero when entry price is zero → all rungs zero
         let targets = Helper::build_profit_targets(
             dec!(0.00),
-            dec!(100.0),
-            dec!(20.0),
+            dec!(0.00),
             dec!(1000.0),
             Position::Long,
         );
         assert!(targets.is_empty() || targets.iter().all(|t| t.size_btc.is_zero()));
+    }
+
+    // ── TP ladder sizing coherence ────────────────────────────────────────────
+    //
+    // Regression: build_profit_targets used to recompute total_size from
+    // margin × leverage / entry instead of using the caller-supplied qty.
+    // When the confluence size_modifier reduces effective margin (e.g. 0.25×),
+    // the recomputed total_size was 4× larger than the actual placed qty,
+    // causing TP1 to attempt closing 80 % of the position instead of 20 %.
+
+    #[test]
+    fn test_build_profit_targets_ladder_sums_to_total_size() {
+        // Simulates 4/4 confluence signals (size_mod=1.0, no funding skew).
+        // total_size = risk_anchored_qty result (caller computes and passes in).
+        let total_size = dec!(0.003684); // e.g. 7x cap at $95k with $50 margin
+        let entry = dec!(95000.0);
+        let step = dec!(2000.0);
+
+        let targets = Helper::build_profit_targets(entry, total_size, step, Position::Long);
+
+        assert_eq!(targets.len(), 4);
+
+        let sum: rust_decimal::Decimal = targets.iter().map(|t| t.size_btc).sum();
+        // Sum of all rungs must equal total_size (last rung absorbs rounding).
+        assert_eq!(sum, total_size.round_dp(5));
+
+        // TP prices must be strictly ascending for a long.
+        let prices: Vec<_> = targets.iter().map(|t| t.target_price).collect();
+        assert!(prices.windows(2).all(|w| w[1] > w[0]));
+    }
+
+    #[test]
+    fn test_build_profit_targets_reduced_size_mod() {
+        // Simulates 1/4 confluence signals (size_mod=0.25): actual position is
+        // 4× smaller than the unmodified margin × leverage / entry would compute.
+        //
+        // Bug: old code used margin × leverage / entry = 0.003684 regardless of
+        // size_mod, so TP1 would close 20% × 0.003684 = 0.000737 BTC of an
+        // actual 0.000921 BTC position — that's 80% of the real position at TP1.
+        //
+        // Fix: caller passes actual_qty; ladder fractions apply to that directly.
+        let actual_qty   = dec!(0.000921); // cap-limited qty with 0.25× margin
+        let inflated_qty = dec!(0.003684); // what the bug computed (bare margin×leverage/entry)
+
+        let entry = dec!(95000.0);
+        let step  = dec!(2000.0);
+
+        // With fix: ladder built on actual_qty.
+        let targets = Helper::build_profit_targets(entry, actual_qty, step, Position::Long);
+
+        let sum: rust_decimal::Decimal = targets.iter().map(|t| t.size_btc).sum();
+        assert_eq!(sum, actual_qty.round_dp(5), "rungs must sum to actual position size");
+
+        // TP1 closes exactly 20% of actual_qty.
+        let expected_tp1 = (actual_qty * dec!(0.20))
+            .round_dp_with_strategy(5, rust_decimal::RoundingStrategy::ToZero);
+        assert_eq!(targets[0].size_btc, expected_tp1);
+
+        // Bug confirmation: inflated TP1 would close far more than intended 20%.
+        let inflated_tp1 = (inflated_qty * dec!(0.20))
+            .round_dp_with_strategy(5, rust_decimal::RoundingStrategy::ToZero);
+        let inflated_pct_of_actual = inflated_tp1 / actual_qty;
+        assert!(
+            inflated_pct_of_actual > dec!(0.75),
+            "bug: inflated TP1 closes {:.0}% of actual position, not 20%",
+            inflated_pct_of_actual * dec!(100)
+        );
+    }
+
+    #[test]
+    fn test_build_profit_targets_short_ladder() {
+        // Mirror test for shorts: TP prices strictly descending, sizes sum correctly.
+        let total_size = dec!(0.003684);
+        let entry = dec!(95000.0);
+        let step = dec!(2000.0);
+
+        let targets = Helper::build_profit_targets(entry, total_size, step, Position::Short);
+
+        assert_eq!(targets.len(), 4);
+
+        let sum: rust_decimal::Decimal = targets.iter().map(|t| t.size_btc).sum();
+        assert_eq!(sum, total_size.round_dp(5));
+
+        let prices: Vec<_> = targets.iter().map(|t| t.target_price).collect();
+        assert!(prices.windows(2).all(|w| w[1] < w[0]));
+    }
+
+    #[test]
+    fn test_build_profit_targets_sl_stepping() {
+        // After TP1: SL steps to entry (break-even).
+        // After TP2+: SL steps to previous TP price.
+        let total_size = dec!(0.003684);
+        let entry = dec!(95000.0);
+        let step = dec!(2000.0);
+
+        let targets = Helper::build_profit_targets(entry, total_size, step, Position::Long);
+
+        // TP1 SL → entry (break-even)
+        assert_eq!(targets[0].sl, Some(entry));
+        // TP2 SL → TP1 price
+        assert_eq!(targets[1].sl, Some(targets[0].target_price));
+        // TP3 SL → TP2 price
+        assert_eq!(targets[2].sl, Some(targets[1].target_price));
+        // Last rung has no SL step (position fully closed)
+        assert_eq!(targets[3].sl, None);
     }
 }

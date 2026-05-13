@@ -134,6 +134,17 @@ pub enum RsiDivEvent {
     },
 }
 
+impl RsiDivEvent {
+    pub fn time(&self) -> DateTime<Utc> {
+        match self {
+            Self::RegularBullish { time, .. }
+            | Self::HiddenBullish  { time, .. }
+            | Self::RegularBearish { time, .. }
+            | Self::HiddenBearish  { time, .. } => *time,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Internal state
 // ---------------------------------------------------------------------------
